@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spotiky – Play Spotify at any timestamp</title>
-  <!-- Open Graph / Discord / Twitter embeds -->
   <meta property="og:title" content="Spotiky – Play Spotify at Timestamp">
   <meta property="og:description" content="Click to play this Spotify track starting at the chosen time.">
   <meta property="og:type" content="website">
@@ -23,22 +22,9 @@
       color: #fff;
       line-height: 1.5;
     }
-    h1 {
-      font-size: 1.75rem;
-      margin: 0 0 4px;
-      font-weight: 700;
-    }
-    .subtitle {
-      color: #b3b3b3;
-      margin: 0 0 28px;
-      font-size: 0.95rem;
-    }
-    label {
-      display: block;
-      font-size: 0.85rem;
-      color: #b3b3b3;
-      margin-bottom: 6px;
-    }
+    h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; }
+    .subtitle { color: #b3b3b3; margin: 0 0 28px; font-size: 0.95rem; }
+    label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
     input {
       width: 100%;
       padding: 14px 16px;
@@ -49,15 +35,7 @@
       background: #282828;
       color: white;
     }
-    input:focus {
-      outline: 2px solid #1DB954;
-    }
-    .row {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-    .row input { margin-bottom: 0; }
+    input:focus { outline: 2px solid #1DB954; }
     button {
       width: 100%;
       padding: 14px;
@@ -72,10 +50,7 @@
       transition: background 0.15s;
     }
     button:hover { background: #1ed760; }
-    button.secondary {
-      background: #282828;
-      margin-top: 10px;
-    }
+    button.secondary { background: #282828; margin-top: 10px; }
     button.secondary:hover { background: #3e3e3e; }
     #status {
       margin-top: 18px;
@@ -89,17 +64,16 @@
       overflow: hidden;
       background: #181818;
     }
-    .hint {
-      font-size: 0.8rem;
-      color: #666;
-      margin-top: 24px;
+    #previewPlayer {
+      margin-top: 16px;
+      display: none;
+      background: #181818;
+      border-radius: 12px;
+      padding: 16px;
     }
-    code {
-      background: #282828;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.85em;
-    }
+    #previewPlayer audio { width: 100%; margin-top: 8px; }
+    .hint { font-size: 0.8rem; color: #666; margin-top: 24px; }
+    code { background: #282828; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
   </style>
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
@@ -119,54 +93,47 @@
   <div id="status">Waiting for player…</div>
   <div id="embed"></div>
 
+  <div id="previewPlayer">
+    <div style="font-size:0.9rem;color:#b3b3b3;margin-bottom:4px;">30-second preview (fallback)</div>
+    <audio id="previewAudio" controls></audio>
+  </div>
+
   <p class="hint">
-    Works best when you're logged into Spotify in this browser.<br><br>
-    <strong>Share links (pick any style):</strong><br>
-    • <code>open.spotiky.com/track/ID&amp;t=83</code><br>
-    • <code>open.spotiky.com/track/ID$1:23</code><br>
-    • <code>spotiky.com/track/ID$83</code><br>
-    Just replace the <strong>f</strong> in “spotify” with <strong>k</strong> and add <code>&amp;t=</code> or <code>$</code> + time.
+    Full tracks work best when you're logged into Spotify in this browser.<br>
+    Otherwise you'll get a 30-second preview.<br><br>
+    Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code>
   </p>
 
   <script>
+    const PREVIEW_WORKER = "https://spotiky-preview.spotikyhq.workers.dev";
+
     let controller = null;
     let pendingTrack = null;
     let pendingSeconds = 0;
+    let fallbackTimer = null;
+    let currentTrackId = null;
 
-    // Accept: 83 | 1:23 | 1.23 | 01:23 | 1:02:03
     function parseTime(t) {
       if (!t) return 0;
       t = String(t).trim().replace(',', '.');
-
-      // mm:ss or hh:mm:ss
       if (t.includes(':')) {
         const parts = t.split(':').map(p => parseFloat(p) || 0);
         if (parts.length === 2) return Math.floor(parts[0] * 60 + parts[1]);
         if (parts.length === 3) return Math.floor(parts[0] * 3600 + parts[1] * 60 + parts[2]);
       }
-
-      // m.ss  (e.g. 1.23 → 83 seconds)
       if (t.includes('.')) {
         const [m, s] = t.split('.').map(p => parseFloat(p) || 0);
-        // treat the part after the dot as seconds (not a decimal fraction)
         return Math.floor(m * 60 + s);
       }
-
       return parseInt(t, 10) || 0;
     }
 
     function extractTrackId(input) {
       if (!input) return null;
       const str = String(input).trim();
-
-      // open.spotify.com/track/ID  or  open.spotiky.com/track/ID
-      // also handles trailing &t=… or $…
       const match = str.match(/(?:track[/:]|spotify:track:)([a-zA-Z0-9]{22})/);
       if (match) return match[1];
-
-      // bare 22-char ID
       if (/^[a-zA-Z0-9]{22}$/.test(str)) return str;
-
       return null;
     }
 
@@ -176,61 +143,89 @@
       return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
     }
 
-    // Build the clean share URL the user wants
     function buildShareUrl(trackId, seconds) {
-      // Prefer the “replace f→k” style
       return `https://open.spotiky.com/track/${trackId}$${seconds}`;
     }
 
-    function play(trackId = null, seconds = null) {
-      const status = document.getElementById('status');
+    function setStatus(msg) {
+      document.getElementById('status').textContent = msg;
+    }
 
+    async function tryPreviewFallback(trackId) {
+      try {
+        setStatus('Trying 30-second preview…');
+        const res = await fetch(`${PREVIEW_WORKER}/?id=${trackId}`);
+        const data = await res.json();
+
+        if (!data.preview_url) {
+          setStatus('No preview available for this track. Try clicking the green ▶ in the player above.');
+          return;
+        }
+
+        const audio = document.getElementById('previewAudio');
+        const box = document.getElementById('previewPlayer');
+        audio.src = data.preview_url;
+        box.style.display = 'block';
+        audio.play().catch(() => {});
+        setStatus(`Playing 30s preview${data.name ? ': ' + data.name : ''}`);
+      } catch (e) {
+        setStatus('Preview failed. Click the green ▶ button in the Spotify player above.');
+      }
+    }
+
+    function play(trackId = null, seconds = null) {
       if (!trackId) {
         trackId = extractTrackId(document.getElementById('link').value);
         seconds = parseTime(document.getElementById('time').value);
       }
-
       if (!trackId) {
-        status.textContent = 'Please enter a valid Spotify track link or ID';
+        setStatus('Please enter a valid Spotify track link or ID');
         return;
       }
 
-      // Keep a clean, shareable URL in the address bar
-      const clean = `/track/${trackId}$${seconds}`;
-      history.replaceState(null, '', clean);
+      currentTrackId = trackId;
+      document.getElementById('previewPlayer').style.display = 'none';
+      document.getElementById('previewAudio').src = '';
+
+      // Clean shareable URL
+      history.replaceState(null, '', `/track/${trackId}$${seconds}`);
 
       if (!controller) {
         pendingTrack = trackId;
         pendingSeconds = seconds;
-        status.textContent = 'Player loading… will start automatically';
+        setStatus('Player loading… will start automatically');
         return;
       }
 
-      status.textContent = `Loading track at ${formatTime(seconds)}…`;
+      setStatus(`Loading track at ${formatTime(seconds)}…`);
       controller.loadEntity(`spotify:track:${trackId}`, false, seconds);
 
+      // Try to start playback
       const tryPlay = (attempt = 1) => {
         controller.play();
-        status.textContent = `Playing from ${formatTime(seconds)}`;
-        if (attempt < 5) {
-          setTimeout(() => tryPlay(attempt + 1), 500 * attempt);
+        if (attempt < 4) {
+          setTimeout(() => tryPlay(attempt + 1), 400 * attempt);
         }
       };
-      setTimeout(() => tryPlay(1), 700);
+      setTimeout(() => tryPlay(1), 600);
+
+      // If nothing is playing after ~2.5s, fall back to real preview
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(() => {
+        tryPreviewFallback(trackId);
+      }, 2500);
     }
 
     function copyShareLink() {
       const trackId = extractTrackId(document.getElementById('link').value);
       const seconds = parseTime(document.getElementById('time').value);
-
       if (!trackId) {
-        document.getElementById('status').textContent = 'Enter a track first';
+        setStatus('Enter a track first');
         return;
       }
-
       const url = buildShareUrl(trackId, seconds);
       navigator.clipboard.writeText(url).then(() => {
-        document.getElementById('status').textContent = 'Link copied!';
+        setStatus('Link copied!');
       }).catch(() => {
         prompt('Copy this link:', url);
       });
@@ -240,8 +235,7 @@
       const path = window.location.pathname + window.location.search + window.location.hash;
       const full = window.location.href;
 
-      // 1. New preferred style: /track/ID$83  or  /track/ID&t=83  or  /track/ID&t=1:23
-      //    also works with open.spotiky.com/track/…
+      // Preferred: /track/ID$83  or  /track/ID&t=83
       let m = path.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=)([^&#\s]+)/i)
            || full.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=)([^&#\s]+)/i);
 
@@ -254,7 +248,7 @@
         return;
       }
 
-      // 2. Legacy hash style: #track/ID.83
+      // Legacy hash
       const hash = window.location.hash.slice(1);
       const hashMatch = hash.match(/^track\/([a-zA-Z0-9]{22})\.(\d+)$/);
       if (hashMatch) {
@@ -266,7 +260,7 @@
         return;
       }
 
-      // 3. Classic query style (still supported): ?track=ID&t=83
+      // Classic query
       const params = new URLSearchParams(window.location.search);
       if (params.get('track')) {
         const id = extractTrackId(params.get('track'));
@@ -285,7 +279,17 @@
         theme: 'dark'
       }, (c) => {
         controller = c;
-        document.getElementById('status').textContent = 'Player ready – enter a track';
+
+        // Cancel fallback if the embed actually starts playing
+        c.addListener('playback_update', (e) => {
+          if (e.data && !e.data.isPaused && e.data.position > 0) {
+            clearTimeout(fallbackTimer);
+            document.getElementById('previewPlayer').style.display = 'none';
+            setStatus(`Playing from ${formatTime(Math.floor(e.data.position / 1000))}`);
+          }
+        });
+
+        setStatus('Player ready – enter a track');
         if (pendingTrack) {
           play(pendingTrack, pendingSeconds);
           pendingTrack = null;
@@ -293,10 +297,7 @@
       });
     };
 
-    // Run on first load
     readUrlAndPlay();
-
-    // React to browser navigation
     window.addEventListener('hashchange', readUrlAndPlay);
     window.addEventListener('popstate', readUrlAndPlay);
   </script>
