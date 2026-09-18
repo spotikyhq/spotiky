@@ -93,9 +93,11 @@
   <div id="status">Waiting for player…</div>
   <div id="embed"></div>
 
-  <div id="previewPlayer">
-    <div style="font-size:0.9rem;color:#b3b3b3;margin-bottom:4px;">30-second preview (fallback)</div>
-    <audio id="previewAudio" controls></audio>
+  <div id="previewPlayer" style="display:none; margin-top:16px; background:#181818; border-radius:12px; padding:16px;">
+    <div style="font-size:0.9rem; color:#b3b3b3; margin-bottom:8px;">
+      30-second preview
+    </div>
+    <audio id="previewAudio" controls playsinline style="width:100%;"></audio>
   </div>
 
   <p class="hint">
