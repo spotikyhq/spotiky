@@ -283,7 +283,7 @@
 
         // Cancel fallback if the embed actually starts playing
         c.addListener('playback_update', (e) => {
-          if (e.data && !e.data.isPaused && e.data.position > 0) {
+          if (e.data && !e.data.isPaused && e.data.position > 500) {  // 0.5s
             clearTimeout(fallbackTimer);
             document.getElementById('previewPlayer').style.display = 'none';
             setStatus(`Playing from ${formatTime(Math.floor(e.data.position / 1000))}`);
