@@ -182,38 +182,39 @@
         setStatus('Please enter a valid Spotify track link or ID');
         return;
       }
-
+    
       currentTrackId = trackId;
       document.getElementById('previewPlayer').style.display = 'none';
       document.getElementById('previewAudio').src = '';
-
+    
       // Clean shareable URL
       history.replaceState(null, '', `/track/${trackId}$${seconds}`);
-
+    
       if (!controller) {
         pendingTrack = trackId;
         pendingSeconds = seconds;
         setStatus('Player loading… will start automatically');
         return;
       }
-
+    
       setStatus(`Loading track at ${formatTime(seconds)}…`);
-      controller.loadEntity(`spotify:track:${trackId}`, false, seconds);
-
-      // Try to start playback
-      const tryPlay = (attempt = 1) => {
-        controller.play();
-        if (attempt < 4) {
-          setTimeout(() => tryPlay(attempt + 1), 400 * attempt);
-        }
-      };
-      setTimeout(() => tryPlay(1), 600);
-
-      // If nothing is playing after ~2.5s, fall back to real preview
+    
+      // Clear any previous fallback timer
       clearTimeout(fallbackTimer);
-      fallbackTimer = setTimeout(() => {
-        tryPreviewFallback(trackId);
-      }, 2500);
+    
+      // Load the track with the desired start time
+      controller.loadEntity(`spotify:track:${trackId}`, false, seconds);
+    
+      // Give the player a moment to load, then play ONCE
+      setTimeout(() => {
+        controller.play();
+        setStatus(`Playing from ${formatTime(seconds)}`);
+    
+        // Only start the preview fallback if nothing is playing after a few seconds
+        fallbackTimer = setTimeout(() => {
+          tryPreviewFallback(trackId);
+        }, 3500);
+      }, 900);
     }
 
     function copyShareLink() {
