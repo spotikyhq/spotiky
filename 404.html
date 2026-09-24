@@ -85,7 +85,7 @@
   <input id="link" placeholder="https://open.spotify.com/track/… or track ID" autocomplete="off">
 
   <label for="time">Start time</label>
-  <input id="time" placeholder="1:23  ·  1.23  ·  83" autocomplete="off">
+  <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
 
   <button onclick="play()">Play from timestamp</button>
   <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
@@ -258,9 +258,9 @@
       const path = window.location.pathname + window.location.search + window.location.hash;
       const full = window.location.href;
 
-      // Preferred: /track/ID$83  or  /track/ID&t=83
-      let m = path.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=)([^&#\s]+)/i)
-           || full.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=)([^&#\s]+)/i);
+      // Preferred: /track/ID$83  or  /track/ID&t=83  or  /track/ID.83
+      let m = path.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i)
+           || full.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i);
 
       if (m) {
         const id = m[1];
