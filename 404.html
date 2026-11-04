@@ -117,7 +117,8 @@
 
     function parseTime(t) {
       if (!t) return 0;
-      t = String(t).trim().replace(',', '.');
+      // Accept the same prefixes share links use: $83, $1.23, t=83, &t=1:23
+      t = String(t).trim().replace(',', '.').replace(/^(?:\$|[?&]?t=)/i, '');
       if (t.includes(':')) {
         const parts = t.split(':').map(p => parseFloat(p) || 0);
         if (parts.length === 2) return Math.floor(parts[0] * 60 + parts[1]);
@@ -254,20 +255,31 @@
       });
     }
 
+    // Finds the track ID and timestamp in a share link. The timestamp can sit
+    // right after the ID or after Spotify's own ?si=… parameter:
+    //   /track/ID$83          /track/ID&t=1:23          /track/ID.83
+    //   /track/ID?si=abc$83   /track/ID?si=abc&t=1:23   /track/ID?si=abc.83
+    function parseShareUrl(url) {
+      let s = String(url);
+      try { s = decodeURIComponent(s); } catch (e) {}   // %24 → $, %3A → :
+      const idMatch = s.match(/\/track\/([a-zA-Z0-9]{22})/i);
+      if (!idMatch) return null;
+      const rest = s.slice(idMatch.index + idMatch[0].length);
+      const t = rest.match(/\$(\d+(?:[.:,]\d+)*)/)          // …$83     …$1:23
+             || rest.match(/[?&]t=(\d+(?:[.:,]\d+)*)/i)     // …&t=83   …?t=1:23
+             || rest.match(/^\.(\d+(?:[.:,]\d+)*)/)         // ID.83
+             || rest.match(/\.(\d+(?:[.:,]\d+)*)\/?$/);     // …?si=abc.83
+      return { id: idMatch[1], time: t ? t[1] : null };
+    }
+
     function readUrlAndPlay() {
-      const path = window.location.pathname + window.location.search + window.location.hash;
-      const full = window.location.href;
-
-      // Preferred: /track/ID$83  or  /track/ID&t=83  or  /track/ID.83
-      let m = path.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i)
-           || full.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i);
-
-      if (m) {
-        const id = m[1];
-        const sec = parseTime(m[2]);
-        document.getElementById('link').value = id;
-        document.getElementById('time').value = m[2];
-        play(id, sec);
+      // Share links: /track/ID plus a timestamp (no timestamp = play from the start)
+      const share = parseShareUrl(window.location.href);
+      if (share) {
+        const time = share.time || '0';
+        document.getElementById('link').value = share.id;
+        document.getElementById('time').value = time;
+        play(share.id, parseTime(time));
         return;
       }
 
