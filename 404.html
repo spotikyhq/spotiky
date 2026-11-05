@@ -122,7 +122,8 @@
     .char .mean { font-size: 0.7rem; color: #b3b3b3; max-width: 76px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
     .char select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
     .code-word { font-size: 0.75rem; color: #b3b3b3; margin: 4px 0 0; }
-    .tones { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+    .tone-rows { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+    .tones { display: flex; flex-wrap: wrap; gap: 4px; }
     .tones .tone { width: 32px; height: 32px; padding: 0; margin: 0; border-radius: 8px; background: #2c2c2c; font-size: 18px; font-weight: 400; line-height: 1;
                    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
     .tones .tone:hover { background: #3e3e3e; }
@@ -304,7 +305,6 @@
     const TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
     const TONE_NAMES = ['Default', 'Light', 'Medium-light', 'Medium', 'Medium-dark', 'Dark'];
     const stripTones = s => String(s).replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
-    const toneIn = s => (String(s).match(/[\u{1F3FB}-\u{1F3FF}]/u) || [''])[0];
     const CODE_RANGE_RE = new RegExp(String.raw`^(?:\$|[?&]t=|\.)?` + RANGE, 'i');
     const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
     const CODE_IN_TEXT_RE = new RegExp(String.raw`(?:^|\/)(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
@@ -1118,11 +1118,11 @@
     // ---- Share as a code ------------------------------------------------------------
     // The Worker suggests a Chinese, a hieroglyph and an emoji code from what the song or
     // playlist is about. Tap a character to swap it. Copying a link saves the codes,
-    // first come, first served; after that they belong to this song for good. People and
-    // hands in an emoji code can take any skin tone; the tone is only in the link.
+    // first come, first served; after that they belong to this song for good. Each person or
+    // hand in an emoji code can take its own skin tone; tones are only ever in the link.
     const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji' };
     const SCRIPTS = ['zh', 'eg', 'em'];
-    let share = null;   // { target, suffix, linkFor, zh, eg, em, tone, busy }
+    let share = null;   // { target, suffix, linkFor, shared, zh, eg, em, tones, busy }
 
     function h(tag, cls, text) {
       const n = document.createElement(tag);
@@ -1166,7 +1166,7 @@
         setStatus('Enter a track first');
         return;
       }
-      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`, toneIn(coded ? coded.code : ''));
+      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`, coded ? coded.code : '');
     }
 
     async function sharePlaylist() {
@@ -1180,13 +1180,13 @@
         return;
       }
       const list = stripTones(playlistPath(items).replace(/^\/playlist\//, ''));   // other skin tones, same playlist
-      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`, toneIn(decodeSafe(location.pathname)));
+      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`, decodeSafe(location.pathname).replace(/^\/playlist\/?/i, ''));
     }
 
-    // tone: the skin tone in the link being shared, if it has one
-    async function openShare(target, suffix, linkFor, tone = '') {
+    // shared: the code as it is in the link being shared (with its skin tones), if it's a code
+    async function openShare(target, suffix, linkFor, shared = '') {
       const panel = document.getElementById('sharePanel');
-      share = { target, suffix, linkFor, zh: null, eg: null, em: null, tone: tone || savedTone(), busy: false };
+      share = { target, suffix, linkFor, shared, zh: null, eg: null, em: null, tones: [], busy: false };
       const mine = share;
       panel.hidden = false;
       panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
@@ -1195,6 +1195,7 @@
       if (!ok) return showShareError(status, data);
       for (const s of SCRIPTS) share[s] = data[s] || null;   // each one is saved already, or a suggestion
       if (!SCRIPTS.some(s => share[s])) return showShareError(502, {});
+      share.tones = startTones();
       renderShare();
     }
 
@@ -1243,7 +1244,7 @@
       const chars = h('div', 'code-chars ' + script);
       c.chars.forEach((ch, i) => chars.append(charPicker(script, i)));
       card.append(chars);
-      if (script === 'em' && hasTones()) card.append(tonePicker());
+      if (script === 'em' && hasTones()) card.append(tonePickers());
       if (script === 'zh' && c.word) card.append(h('p', 'code-word', `Also a word: ${c.word}`));
       if (c.why) card.append(h('p', 'code-why', c.why));
       card.append(h('p', 'code-note', c.taken ? 'Taken by another song. Swap a character.' : ''));
@@ -1259,29 +1260,40 @@
       return script === 'zh' ? (ch.meaning || '') : (ch.name || ch.meaning || '');
     }
 
-    // An emoji as it shows in this link: with the chosen skin tone when it can take one
-    const shown = (script, ch) => (script === 'em' && ch.toneable ? ch.char + share.tone : ch.char);
+    // Emoji i as it shows in this link, with its own skin tone when it can take one
+    function shownEmoji(i) {
+      const ch = share.em.chars[i];
+      return ch.char + (ch.toneable ? share.tones[i] || '' : '');
+    }
+
+    // The tone an emoji gets when it's swapped into place i: the tone already picked
+    // for that place, or this browser's usual tone for the emoji
+    function toneIfPicked(i, o) {
+      if (!o.toneable) return '';
+      return share.em.chars[i].toneable ? share.tones[i] || '' : usualTone(o.char);
+    }
 
     // The code as it goes in the link (the saved code never has a tone)
     function linkCode(script) {
-      const c = share[script];
-      return script === 'em' && share.tone ? c.chars.map(ch => shown(script, ch)).join('') : c.code;
+      return script === 'em' ? share.em.chars.map((ch, i) => shownEmoji(i)).join('') : share[script].code;
     }
 
     function charPicker(script, i) {
       const c = share[script], ch = c.chars[i];
+      const face = script === 'em' ? shownEmoji(i) : ch.char;
       const wrap = h('label', 'char');
-      const big = h('span', 'big', shown(script, ch));
+      const big = h('span', 'big', face);
       big.setAttribute('aria-hidden', 'true');
       wrap.append(big, h('span', 'mean', charLabel(script, ch)));
       const options = (c.options && c.options[i]) || [];
       if (!c.saved && options.length > 1) {
         const sel = document.createElement('select');
         const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji' }[script];
-        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${shown(script, ch)} ${charLabel(script, ch)}. Change it`);
+        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${face} ${charLabel(script, ch)}. Change it`);
         for (const o of options) {
           const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : script === 'em' ? o.name : o.meaning;
-          const opt = h('option', null, meaning ? `${shown(script, o)}  ${meaning}` : shown(script, o));
+          const look = script === 'em' ? o.char + toneIfPicked(i, o) : o.char;
+          const opt = h('option', null, meaning ? `${look}  ${meaning}` : look);
           opt.value = o.char;
           opt.selected = o.char === ch.char;
           sel.append(opt);
@@ -1293,51 +1305,86 @@
       return wrap;
     }
 
-    // Six swatches showing the code's first person or hand in each skin tone. Only this
-    // link changes: every tone opens the same song, so a tone can't make a new code.
-    function tonePicker() {
-      const face = share.em.chars.find(ch => ch.toneable).char;
-      const row = h('div', 'tones');
-      row.setAttribute('role', 'group');
-      row.setAttribute('aria-label', 'Skin tone');
-      TONES.forEach((t, i) => {
-        const b = h('button', 'tone', face + t);
-        b.type = 'button';
-        b.title = `${TONE_NAMES[i]} skin tone`;
-        b.setAttribute('aria-label', b.title);
-        b.setAttribute('aria-pressed', String(share.tone === t));
-        b.addEventListener('click', () => pickTone(i));
-        row.append(b);
+    // A row of six swatches for each person or hand in the code, so each takes its own skin
+    // tone. Only this link changes: every tone opens the same song, so a tone can't make a new code.
+    function tonePickers() {
+      const rows = h('div', 'tone-rows');
+      share.em.chars.forEach((ch, i) => {
+        if (!ch.toneable) return;
+        const row = h('div', 'tones');
+        row.setAttribute('role', 'group');
+        row.setAttribute('aria-label', `Skin tone for ${ch.name || ch.char}`);
+        TONES.forEach((t, k) => {
+          const b = h('button', 'tone', ch.char + t);
+          b.type = 'button';
+          b.title = `${TONE_NAMES[k]} skin tone`;
+          b.setAttribute('aria-label', b.title);
+          b.setAttribute('aria-pressed', String((share.tones[i] || '') === t));
+          b.dataset.at = `${i}-${k}`;
+          b.addEventListener('click', () => pickTone(i, k));
+          row.append(b);
+        });
+        rows.append(row);
       });
-      return row;
+      return rows;
     }
 
-    function pickTone(i) {
-      share.tone = TONES[i];
-      rememberTone(share.tone);
+    function pickTone(i, k) {
+      share.tones[i] = TONES[k];
+      rememberTone(share.em.chars[i].char, TONES[k]);
       renderShare();
-      const again = document.querySelectorAll('#sharePanel .tone')[i];
+      const again = document.querySelector(`#sharePanel .tone[data-at="${i}-${k}"]`);
       if (again) again.focus();
     }
 
-    // The last tone picked on this device, like an emoji keyboard remembers it
-    const TONE_KEY = 'spotiky-skin-tone';
-    function savedTone() {
+    // Each emoji's first tone: the one it has in the link being shared, when that link is this
+    // emoji code; otherwise its usual tone in this browser
+    function startTones() {
+      if (!share.em) return [];
+      const fromLink = stripTones(stripVS(share.shared)) === share.em.code ? tonesByPlace(share.shared) : null;
+      const saved = savedTones();
+      return share.em.chars.map((ch, i) => (!ch.toneable ? '' : fromLink ? fromLink[i] || '' : usualTone(ch.char, saved)));
+    }
+
+    // The tone after each character: "👋🏻🌙🙌" -> ["🏻", "", ""]
+    function tonesByPlace(text) {
+      const out = [];
+      for (const c of stripVS(text)) {
+        if (/^[\u{1F3FB}-\u{1F3FF}]$/u.test(c)) { if (out.length) out[out.length - 1] = c; }
+        else out.push('');
+      }
+      return out;
+    }
+
+    // Tones this browser picked before, like an emoji keyboard remembers them: { "👋": "🏽", last: "🏽" }
+    const TONE_KEY = 'spotiky-skin-tones';
+    function savedTones() {
       try {
-        const t = localStorage.getItem(TONE_KEY);
-        return TONES.includes(t) ? t : '';
+        const v = JSON.parse(localStorage.getItem(TONE_KEY) || '{}');
+        return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
       } catch (e) {
-        return '';
+        return {};
       }
     }
-    function rememberTone(t) {
-      try { localStorage.setItem(TONE_KEY, t); } catch (e) {}
+    // The last tone picked for this emoji, or else the last tone picked at all
+    function usualTone(ch, saved = savedTones()) {
+      const t = Object.prototype.hasOwnProperty.call(saved, ch) ? saved[ch] : saved.last;
+      return TONES.includes(t) ? t : '';
+    }
+    function rememberTone(ch, t) {
+      try {
+        const saved = savedTones();
+        saved[ch] = t;
+        saved.last = t;
+        localStorage.setItem(TONE_KEY, JSON.stringify(saved));
+      } catch (e) {}
     }
 
     async function swapChar(script, i, value) {
       const c = share[script];
       const pick = (c.options[i] || []).find(o => o.char === value);
       if (!pick) return;
+      if (script === 'em') share.tones[i] = toneIfPicked(i, pick);
       c.chars = c.chars.map((ch, j) => (j === i ? pick : ch));
       c.code = c.chars.map(ch => ch.char).join('');
       c.word = null;   // the "also a word" note was for the suggested pair; saving checks again
@@ -1415,7 +1462,9 @@
         throw new Error('not saved');
       }
       // what's saved now; when another sharer saved this song first, theirs come back
+      const emBefore = share.em && share.em.code;
       for (const s of SCRIPTS) share[s] = data[s] || (share[s] && share[s].saved ? share[s] : null);
+      if (share.em && share.em.code !== emBefore) share.tones = startTones();
       renderShare();
       if (!share[script]) throw new Error('no code');
       return shareLink(script);
