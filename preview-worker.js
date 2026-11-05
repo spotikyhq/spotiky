@@ -4,7 +4,7 @@
 //   GET  /?id=TRACK_ID     a track's preview MP3 and song name: { preview_url, name, source }
 //   GET  /codes?c=夜光,𓇰𓇶   what each Spotiky code stands for: { "夜光": {type, id, ...}, "𓇰𓇶": null }
 //   POST /suggest          { type: "track", id } or { type: "playlist", items } -> code suggestions
-//   POST /claim            the same, plus { zh: {code, chars, why}, eg: {code, why} } -> saves the codes
+//   POST /claim            the same, plus { zh: {code, chars, why}, eg: {code, why}, em: {code, why} } -> saves the codes
 //
 // Bindings (Worker -> Settings -> Bindings):
 //   CODES  a KV namespace that stores the codes
@@ -14,23 +14,27 @@
 // public embed page (open.spotify.com/embed/track/ID) and pulls the preview MP3
 // link out of its HTML.
 //
-// Codes: a song or playlist gets one Chinese code (2-3 common Simplified characters)
-// and one hieroglyph code (2-3 signs from the Spotiky set of 98). The first codes
-// saved for a song are its codes for good, so the same song always gets the same
-// codes. KV keys:
+// Codes: a song or playlist gets one Chinese code (2-3 common Simplified characters),
+// one hieroglyph code (2-3 signs from the Spotiky set of 98) and one emoji code (2-3
+// emoji that look the same on Windows, Mac, iPhone and Android). Codes saved for a
+// song are its codes for good, so the same song always gets the same codes; a song
+// missing a kind of code can still gain one. KV keys:
 //   <code>           {type: "track", id} or {type: "playlist", items}, plus meanings
-//   track:<id>       {zh, eg} for a song
-//   list:<hash>      {zh, eg} for a playlist
+//   track:<id>       {zh, eg, em} for a song
+//   list:<hash>      {zh, eg, em} for a playlist
 //   shape:<code>     a Chinese code with look-alike characters, so 白光 blocks 自光
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/data/zh-words.json";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}]{1,6}$/u;
+const SCRIPTS = ["zh", "eg", "em"];
+const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}$/u;
 const ID_RE = /^[a-zA-Z0-9]{22}$/;
-const ITEM_RE = /^(?:[a-zA-Z0-9]{22}(?:\$\d+(?:-\d+)?)?|[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}]{1,6}(?:\d+(?:-\d+)?)?)$/u;
+const ITEM_RE = /^(?:[a-zA-Z0-9]{22}(?:\$\d+(?:-\d+)?)?|[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}(?:\d+(?:-\d+)?)?)$/u;
+const stripVS = s => String(s || "").replace(/[︎️]/g, "");   // ❤️ and ❤ are one code
 
-// ---- Character data (generated from the Spotiky glyph review and China's 2013 character table) ----
+// ---- Character data (generated from the Spotiky glyph review, China's 2013 character
+// table and Unicode's emoji list: single emoji from Emoji 11.0 or earlier, no flags) ----
 const GLYPHS = [
   {"c": "𓀁", "name": "speaker", "meaning": "speak, sing, eat, think, feel"},
   {"c": "𓀗", "name": "elder", "meaning": "old, elder, age"},
@@ -169,7 +173,444 @@ const ZH_POOL = new Set(
   + "嚎赡穗魏簧簇繁徽爵朦臊鳄癌辫赢糟糠燥懦豁臀臂翼骤藕鞭藤覆瞻蹦嚣镰翻鳍鹰瀑襟璧戳孽警蘑藻攀曝蹲蹭蹬巅簸簿蟹颤靡癣瓣羹鳖爆疆鬓壤馨耀躁蠕嚼嚷巍籍鳞魔糯灌譬蠢霸露霹躏黯髓赣囊镶瓤罐矗");
 const ZH_SHAPES = {"己": "己", "已": "己", "巳": "己", "未": "未", "末": "未", "土": "土", "士": "土", "日": "日", "曰": "日", "人": "人", "入": "人", "八": "人", "大": "大", "太": "大", "犬": "大", "天": "天", "夫": "天", "夭": "天", "王": "王", "玉": "王", "主": "王", "刀": "刀", "力": "刀", "千": "千", "干": "千", "于": "千", "戊": "戊", "戌": "戊", "戎": "戊", "免": "免", "兔": "免", "鸟": "鸟", "乌": "鸟", "白": "白", "自": "白", "贝": "贝", "见": "贝", "由": "由", "甲": "由", "申": "由", "田": "由", "午": "午", "牛": "午", "今": "今", "令": "今", "折": "折", "拆": "折", "析": "折", "侯": "侯", "候": "侯", "失": "失", "矢": "失", "拔": "拔", "拨": "拔", "辨": "辨", "辩": "辨", "辫": "辨", "壁": "壁", "璧": "壁", "暑": "暑", "署": "暑", "崇": "崇", "祟": "崇", "狠": "狠", "很": "狠", "幻": "幻", "幼": "幻", "洒": "洒", "酒": "洒", "历": "历", "厉": "历", "徒": "徒", "徙": "徒", "弛": "弛", "驰": "弛", "晴": "晴", "睛": "晴", "冶": "冶", "治": "冶"};
 const ZH_BLOCK = new Set(["上床", "二奶", "二逼", "他妈", "你妈", "做爱", "傻逼", "六四", "出轨", "分梨", "卧槽", "去死", "台独", "吸毒", "垃圾", "奶子", "妈的", "婊子", "小三", "屁股", "屌丝", "废物", "强奸", "性交", "我操", "找死", "放屁", "杀人", "死人", "毒品", "法轮", "混蛋", "港独", "滚蛋", "牛逼", "狗屎", "王八", "畜生", "疆独", "笨蛋", "绿帽", "自杀", "藏独", "蠢货", "装逼", "该死", "贱人", "送终", "送钟", "骚货", "鸡巴"]);
+const EMOJI = [
+  {"e": "😁", "name": "smiling eyes"},
+  {"e": "😂", "name": "tears of joy"},
+  {"e": "🙃", "name": "upside-down face"},
+  {"e": "😉", "name": "winking face"},
+  {"e": "😊", "name": "smiling eyes"},
+  {"e": "😇", "name": "halo"},
+  {"e": "🥰", "name": "hearts"},
+  {"e": "😍", "name": "heart-eyes"},
+  {"e": "🤩", "name": "star-struck"},
+  {"e": "😘", "name": "kiss"},
+  {"e": "😋", "name": "savoring food"},
+  {"e": "🤪", "name": "zany face"},
+  {"e": "🤑", "name": "money-mouth face"},
+  {"e": "🤗", "name": "open hands"},
+  {"e": "🤫", "name": "shushing face"},
+  {"e": "🤔", "name": "thinking face"},
+  {"e": "🤐", "name": "zipper-mouth face"},
+  {"e": "😏", "name": "smirking face"},
+  {"e": "🙄", "name": "rolling eyes"},
+  {"e": "😬", "name": "grimacing face"},
+  {"e": "🤥", "name": "lying face"},
+  {"e": "😔", "name": "pensive face"},
+  {"e": "😴", "name": "sleeping face"},
+  {"e": "🥶", "name": "cold face"},
+  {"e": "🤯", "name": "exploding head"},
+  {"e": "🤠", "name": "cowboy hat face"},
+  {"e": "🥳", "name": "partying face"},
+  {"e": "😎", "name": "sunglasses"},
+  {"e": "🤓", "name": "nerd face"},
+  {"e": "😳", "name": "flushed face"},
+  {"e": "🥺", "name": "pleading face"},
+  {"e": "😭", "name": "loudly crying face"},
+  {"e": "😱", "name": "screaming in fear"},
+  {"e": "😤", "name": "steam from nose"},
+  {"e": "😡", "name": "enraged face"},
+  {"e": "😈", "name": "horns"},
+  {"e": "💀", "name": "skull"},
+  {"e": "🤡", "name": "clown face"},
+  {"e": "👻", "name": "ghost"},
+  {"e": "👽", "name": "alien"},
+  {"e": "👾", "name": "alien monster"},
+  {"e": "🤖", "name": "robot"},
+  {"e": "🙈", "name": "see-no-evil monkey"},
+  {"e": "💌", "name": "love letter"},
+  {"e": "💘", "name": "heart with arrow"},
+  {"e": "💖", "name": "sparkling heart"},
+  {"e": "💔", "name": "broken heart"},
+  {"e": "🧡", "name": "orange heart"},
+  {"e": "💛", "name": "yellow heart"},
+  {"e": "💚", "name": "green heart"},
+  {"e": "💙", "name": "blue heart"},
+  {"e": "💜", "name": "purple heart"},
+  {"e": "🖤", "name": "black heart"},
+  {"e": "💋", "name": "kiss mark"},
+  {"e": "💯", "name": "hundred points"},
+  {"e": "💥", "name": "collision"},
+  {"e": "💫", "name": "dizzy"},
+  {"e": "💨", "name": "dashing away"},
+  {"e": "💬", "name": "speech balloon"},
+  {"e": "💭", "name": "thought balloon"},
+  {"e": "💤", "name": "ZZZ"},
+  {"e": "👋", "name": "waving hand"},
+  {"e": "🖖", "name": "vulcan salute"},
+  {"e": "👌", "name": "OK hand"},
+  {"e": "🤞", "name": "crossed fingers"},
+  {"e": "🤘", "name": "sign of the horns"},
+  {"e": "🤙", "name": "call me hand"},
+  {"e": "👍", "name": "thumbs up"},
+  {"e": "👎", "name": "thumbs down"},
+  {"e": "✊", "name": "raised fist"},
+  {"e": "👏", "name": "clapping hands"},
+  {"e": "🙌", "name": "raising hands"},
+  {"e": "🤝", "name": "handshake"},
+  {"e": "🙏", "name": "folded hands"},
+  {"e": "💅", "name": "nail polish"},
+  {"e": "🤳", "name": "selfie"},
+  {"e": "💪", "name": "flexed biceps"},
+  {"e": "👂", "name": "ear"},
+  {"e": "🧠", "name": "brain"},
+  {"e": "👀", "name": "eyes"},
+  {"e": "👶", "name": "baby"},
+  {"e": "👼", "name": "baby angel"},
+  {"e": "🎅", "name": "Santa Claus"},
+  {"e": "🦸", "name": "superhero"},
+  {"e": "🧙", "name": "mage"},
+  {"e": "🧚", "name": "fairy"},
+  {"e": "🧛", "name": "vampire"},
+  {"e": "🧜", "name": "merperson"},
+  {"e": "🧞", "name": "genie"},
+  {"e": "🧟", "name": "zombie"},
+  {"e": "🚶", "name": "person walking"},
+  {"e": "🏃", "name": "person running"},
+  {"e": "💃", "name": "woman dancing"},
+  {"e": "🕺", "name": "man dancing"},
+  {"e": "👯", "name": "people with bunny ears"},
+  {"e": "🧗", "name": "person climbing"},
+  {"e": "🏂", "name": "snowboarder"},
+  {"e": "🏄", "name": "person surfing"},
+  {"e": "🏊", "name": "person swimming"},
+  {"e": "🤸", "name": "person cartwheeling"},
+  {"e": "🤹", "name": "person juggling"},
+  {"e": "🧘", "name": "person in lotus position"},
+  {"e": "🛀", "name": "person taking bath"},
+  {"e": "🛌", "name": "person in bed"},
+  {"e": "💑", "name": "couple with heart"},
+  {"e": "👣", "name": "footprints"},
+  {"e": "🐵", "name": "monkey face"},
+  {"e": "🦍", "name": "gorilla"},
+  {"e": "🐶", "name": "dog face"},
+  {"e": "🐺", "name": "wolf"},
+  {"e": "🦊", "name": "fox"},
+  {"e": "🦝", "name": "raccoon"},
+  {"e": "🐱", "name": "cat face"},
+  {"e": "🦁", "name": "lion"},
+  {"e": "🐯", "name": "tiger face"},
+  {"e": "🐆", "name": "leopard"},
+  {"e": "🐴", "name": "horse face"},
+  {"e": "🦄", "name": "unicorn"},
+  {"e": "🦓", "name": "zebra"},
+  {"e": "🦌", "name": "deer"},
+  {"e": "🐮", "name": "cow face"},
+  {"e": "🐷", "name": "pig face"},
+  {"e": "🐗", "name": "boar"},
+  {"e": "🐑", "name": "ewe"},
+  {"e": "🐫", "name": "two-hump camel"},
+  {"e": "🦙", "name": "llama"},
+  {"e": "🦒", "name": "giraffe"},
+  {"e": "🐘", "name": "elephant"},
+  {"e": "🦏", "name": "rhinoceros"},
+  {"e": "🐭", "name": "mouse face"},
+  {"e": "🐰", "name": "rabbit face"},
+  {"e": "🦔", "name": "hedgehog"},
+  {"e": "🦇", "name": "bat"},
+  {"e": "🐻", "name": "bear"},
+  {"e": "🐨", "name": "koala"},
+  {"e": "🐼", "name": "panda"},
+  {"e": "🦘", "name": "kangaroo"},
+  {"e": "🦡", "name": "badger"},
+  {"e": "🐾", "name": "paw prints"},
+  {"e": "🦃", "name": "turkey"},
+  {"e": "🐓", "name": "rooster"},
+  {"e": "🐣", "name": "hatching chick"},
+  {"e": "🐦", "name": "bird"},
+  {"e": "🐧", "name": "penguin"},
+  {"e": "🦅", "name": "eagle"},
+  {"e": "🦆", "name": "duck"},
+  {"e": "🦢", "name": "swan"},
+  {"e": "🦉", "name": "owl"},
+  {"e": "🦚", "name": "peacock"},
+  {"e": "🦜", "name": "parrot"},
+  {"e": "🐸", "name": "frog"},
+  {"e": "🐊", "name": "crocodile"},
+  {"e": "🐢", "name": "turtle"},
+  {"e": "🐍", "name": "snake"},
+  {"e": "🐲", "name": "dragon face"},
+  {"e": "🦖", "name": "T-Rex"},
+  {"e": "🐳", "name": "spouting whale"},
+  {"e": "🐠", "name": "tropical fish"},
+  {"e": "🐡", "name": "blowfish"},
+  {"e": "🦈", "name": "shark"},
+  {"e": "🐙", "name": "octopus"},
+  {"e": "🐚", "name": "spiral shell"},
+  {"e": "🦀", "name": "crab"},
+  {"e": "🦐", "name": "shrimp"},
+  {"e": "🐌", "name": "snail"},
+  {"e": "🦋", "name": "butterfly"},
+  {"e": "🐛", "name": "bug"},
+  {"e": "🐜", "name": "ant"},
+  {"e": "🐝", "name": "honeybee"},
+  {"e": "🐞", "name": "lady beetle"},
+  {"e": "🦗", "name": "cricket"},
+  {"e": "🦂", "name": "scorpion"},
+  {"e": "💐", "name": "bouquet"},
+  {"e": "🌸", "name": "cherry blossom"},
+  {"e": "🌹", "name": "rose"},
+  {"e": "🥀", "name": "wilted flower"},
+  {"e": "🌻", "name": "sunflower"},
+  {"e": "🌷", "name": "tulip"},
+  {"e": "🌱", "name": "seedling"},
+  {"e": "🌲", "name": "evergreen tree"},
+  {"e": "🌳", "name": "deciduous tree"},
+  {"e": "🌴", "name": "palm tree"},
+  {"e": "🌵", "name": "cactus"},
+  {"e": "🌾", "name": "sheaf of rice"},
+  {"e": "🌿", "name": "herb"},
+  {"e": "🍀", "name": "four leaf clover"},
+  {"e": "🍁", "name": "maple leaf"},
+  {"e": "🍄", "name": "mushroom"},
+  {"e": "🍇", "name": "grapes"},
+  {"e": "🍉", "name": "watermelon"},
+  {"e": "🍊", "name": "tangerine"},
+  {"e": "🍋", "name": "lemon"},
+  {"e": "🍌", "name": "banana"},
+  {"e": "🍍", "name": "pineapple"},
+  {"e": "🥭", "name": "mango"},
+  {"e": "🍎", "name": "red apple"},
+  {"e": "🍐", "name": "pear"},
+  {"e": "🍒", "name": "cherries"},
+  {"e": "🍓", "name": "strawberry"},
+  {"e": "🥝", "name": "kiwi fruit"},
+  {"e": "🥥", "name": "coconut"},
+  {"e": "🥑", "name": "avocado"},
+  {"e": "🥔", "name": "potato"},
+  {"e": "🥕", "name": "carrot"},
+  {"e": "🌽", "name": "ear of corn"},
+  {"e": "🥒", "name": "cucumber"},
+  {"e": "🥬", "name": "leafy green"},
+  {"e": "🥦", "name": "broccoli"},
+  {"e": "🥜", "name": "peanuts"},
+  {"e": "🍞", "name": "bread"},
+  {"e": "🥐", "name": "croissant"},
+  {"e": "🥞", "name": "pancakes"},
+  {"e": "🧀", "name": "cheese wedge"},
+  {"e": "🍗", "name": "poultry leg"},
+  {"e": "🥩", "name": "cut of meat"},
+  {"e": "🍔", "name": "hamburger"},
+  {"e": "🍟", "name": "french fries"},
+  {"e": "🍕", "name": "pizza"},
+  {"e": "🌭", "name": "hot dog"},
+  {"e": "🥪", "name": "sandwich"},
+  {"e": "🌮", "name": "taco"},
+  {"e": "🥚", "name": "egg"},
+  {"e": "🍳", "name": "cooking"},
+  {"e": "🥗", "name": "green salad"},
+  {"e": "🍿", "name": "popcorn"},
+  {"e": "🧂", "name": "salt"},
+  {"e": "🥫", "name": "canned food"},
+  {"e": "🍱", "name": "bento box"},
+  {"e": "🍙", "name": "rice ball"},
+  {"e": "🍜", "name": "steaming bowl"},
+  {"e": "🍝", "name": "spaghetti"},
+  {"e": "🍣", "name": "sushi"},
+  {"e": "🍡", "name": "dango"},
+  {"e": "🥟", "name": "dumpling"},
+  {"e": "🥠", "name": "fortune cookie"},
+  {"e": "🥡", "name": "takeout box"},
+  {"e": "🍦", "name": "soft ice cream"},
+  {"e": "🍩", "name": "doughnut"},
+  {"e": "🍪", "name": "cookie"},
+  {"e": "🎂", "name": "birthday cake"},
+  {"e": "🧁", "name": "cupcake"},
+  {"e": "🥧", "name": "pie"},
+  {"e": "🍫", "name": "chocolate bar"},
+  {"e": "🍬", "name": "candy"},
+  {"e": "🍭", "name": "lollipop"},
+  {"e": "🍮", "name": "custard"},
+  {"e": "🍯", "name": "honey pot"},
+  {"e": "☕", "name": "hot beverage"},
+  {"e": "🍵", "name": "teacup without handle"},
+  {"e": "🍾", "name": "bottle with popping cork"},
+  {"e": "🍷", "name": "wine glass"},
+  {"e": "🍸", "name": "cocktail glass"},
+  {"e": "🍹", "name": "tropical drink"},
+  {"e": "🍻", "name": "clinking beer mugs"},
+  {"e": "🥂", "name": "clinking glasses"},
+  {"e": "🥃", "name": "tumbler glass"},
+  {"e": "🥤", "name": "cup with straw"},
+  {"e": "🌍", "name": "globe showing Europe-Africa"},
+  {"e": "🧭", "name": "compass"},
+  {"e": "🌋", "name": "volcano"},
+  {"e": "🧱", "name": "brick"},
+  {"e": "🏠", "name": "house"},
+  {"e": "🏥", "name": "hospital"},
+  {"e": "🏭", "name": "factory"},
+  {"e": "🏰", "name": "castle"},
+  {"e": "💒", "name": "wedding"},
+  {"e": "🗼", "name": "Tokyo tower"},
+  {"e": "🗽", "name": "Statue of Liberty"},
+  {"e": "⛲", "name": "fountain"},
+  {"e": "⛺", "name": "tent"},
+  {"e": "🌃", "name": "night with stars"},
+  {"e": "🌅", "name": "sunrise"},
+  {"e": "🎠", "name": "carousel horse"},
+  {"e": "🎡", "name": "ferris wheel"},
+  {"e": "🎢", "name": "roller coaster"},
+  {"e": "🎪", "name": "circus tent"},
+  {"e": "🚂", "name": "locomotive"},
+  {"e": "🚌", "name": "bus"},
+  {"e": "🚑", "name": "ambulance"},
+  {"e": "🚒", "name": "fire engine"},
+  {"e": "🚕", "name": "taxi"},
+  {"e": "🚗", "name": "automobile"},
+  {"e": "🚜", "name": "tractor"},
+  {"e": "🛵", "name": "motor scooter"},
+  {"e": "🚲", "name": "bicycle"},
+  {"e": "🛹", "name": "skateboard"},
+  {"e": "🚨", "name": "police car light"},
+  {"e": "🚦", "name": "vertical traffic light"},
+  {"e": "🛑", "name": "stop sign"},
+  {"e": "⚓", "name": "anchor"},
+  {"e": "⛵", "name": "sailboat"},
+  {"e": "🛶", "name": "canoe"},
+  {"e": "🚢", "name": "ship"},
+  {"e": "🛫", "name": "airplane departure"},
+  {"e": "🚁", "name": "helicopter"},
+  {"e": "🚀", "name": "rocket"},
+  {"e": "🛸", "name": "flying saucer"},
+  {"e": "🧳", "name": "luggage"},
+  {"e": "⌛", "name": "hourglass done"},
+  {"e": "⏰", "name": "alarm clock"},
+  {"e": "🌕", "name": "full moon"},
+  {"e": "🌙", "name": "crescent moon"},
+  {"e": "🌞", "name": "sun with face"},
+  {"e": "🌟", "name": "glowing star"},
+  {"e": "🌠", "name": "shooting star"},
+  {"e": "⛅", "name": "sun behind cloud"},
+  {"e": "🌀", "name": "cyclone"},
+  {"e": "🌈", "name": "rainbow"},
+  {"e": "☔", "name": "umbrella with rain drops"},
+  {"e": "⚡", "name": "high voltage"},
+  {"e": "⛄", "name": "snowman without snow"},
+  {"e": "🔥", "name": "fire"},
+  {"e": "💧", "name": "droplet"},
+  {"e": "🌊", "name": "water wave"},
+  {"e": "🎃", "name": "jack-o-lantern"},
+  {"e": "🎄", "name": "Christmas tree"},
+  {"e": "🎆", "name": "fireworks"},
+  {"e": "✨", "name": "sparkles"},
+  {"e": "🎈", "name": "balloon"},
+  {"e": "🎉", "name": "party popper"},
+  {"e": "🎀", "name": "ribbon"},
+  {"e": "🎁", "name": "wrapped gift"},
+  {"e": "🎫", "name": "ticket"},
+  {"e": "🏆", "name": "trophy"},
+  {"e": "🥇", "name": "1st place medal"},
+  {"e": "⚽", "name": "soccer ball"},
+  {"e": "⚾", "name": "baseball"},
+  {"e": "🏀", "name": "basketball"},
+  {"e": "🏈", "name": "american football"},
+  {"e": "🎾", "name": "tennis"},
+  {"e": "🎳", "name": "bowling"},
+  {"e": "🏓", "name": "ping pong"},
+  {"e": "🥊", "name": "boxing glove"},
+  {"e": "⛳", "name": "flag in hole"},
+  {"e": "🎣", "name": "fishing pole"},
+  {"e": "🎿", "name": "skis"},
+  {"e": "🎯", "name": "bullseye"},
+  {"e": "🎱", "name": "pool 8 ball"},
+  {"e": "🔮", "name": "crystal ball"},
+  {"e": "🎮", "name": "video game"},
+  {"e": "🎰", "name": "slot machine"},
+  {"e": "🎲", "name": "game die"},
+  {"e": "🧩", "name": "puzzle piece"},
+  {"e": "🧸", "name": "teddy bear"},
+  {"e": "🃏", "name": "joker"},
+  {"e": "🎭", "name": "performing arts"},
+  {"e": "🎨", "name": "artist palette"},
+  {"e": "🧶", "name": "yarn"},
+  {"e": "👓", "name": "glasses"},
+  {"e": "👕", "name": "t-shirt"},
+  {"e": "👖", "name": "jeans"},
+  {"e": "🧣", "name": "scarf"},
+  {"e": "🧤", "name": "gloves"},
+  {"e": "🧥", "name": "coat"},
+  {"e": "🧦", "name": "socks"},
+  {"e": "👗", "name": "dress"},
+  {"e": "👙", "name": "bikini"},
+  {"e": "👜", "name": "handbag"},
+  {"e": "🎒", "name": "backpack"},
+  {"e": "👟", "name": "running shoe"},
+  {"e": "👠", "name": "high-heeled shoe"},
+  {"e": "👢", "name": "woman’s boot"},
+  {"e": "👑", "name": "crown"},
+  {"e": "👒", "name": "woman’s hat"},
+  {"e": "🎩", "name": "top hat"},
+  {"e": "🎓", "name": "graduation cap"},
+  {"e": "🧢", "name": "billed cap"},
+  {"e": "💄", "name": "lipstick"},
+  {"e": "💍", "name": "ring"},
+  {"e": "💎", "name": "gem stone"},
+  {"e": "🔊", "name": "speaker high volume"},
+  {"e": "📢", "name": "loudspeaker"},
+  {"e": "🔔", "name": "bell"},
+  {"e": "🎼", "name": "musical score"},
+  {"e": "🎶", "name": "musical notes"},
+  {"e": "🎤", "name": "microphone"},
+  {"e": "🎧", "name": "headphone"},
+  {"e": "📻", "name": "radio"},
+  {"e": "🎷", "name": "saxophone"},
+  {"e": "🎸", "name": "guitar"},
+  {"e": "🎹", "name": "musical keyboard"},
+  {"e": "🎺", "name": "trumpet"},
+  {"e": "🎻", "name": "violin"},
+  {"e": "🥁", "name": "drum"},
+  {"e": "📱", "name": "mobile phone"},
+  {"e": "📞", "name": "telephone receiver"},
+  {"e": "🔋", "name": "battery"},
+  {"e": "💻", "name": "laptop"},
+  {"e": "💿", "name": "optical disk"},
+  {"e": "🎥", "name": "movie camera"},
+  {"e": "🎬", "name": "clapper board"},
+  {"e": "📺", "name": "television"},
+  {"e": "📷", "name": "camera"},
+  {"e": "📼", "name": "videocassette"},
+  {"e": "🔍", "name": "magnifying glass tilted left"},
+  {"e": "💡", "name": "light bulb"},
+  {"e": "🔦", "name": "flashlight"},
+  {"e": "🏮", "name": "red paper lantern"},
+  {"e": "📖", "name": "open book"},
+  {"e": "📚", "name": "books"},
+  {"e": "📜", "name": "scroll"},
+  {"e": "📰", "name": "newspaper"},
+  {"e": "🔖", "name": "bookmark"},
+  {"e": "💰", "name": "money bag"},
+  {"e": "💸", "name": "money with wings"},
+  {"e": "💳", "name": "credit card"},
+  {"e": "📦", "name": "package"},
+  {"e": "📮", "name": "postbox"},
+  {"e": "📝", "name": "memo"},
+  {"e": "💼", "name": "briefcase"},
+  {"e": "📅", "name": "calendar"},
+  {"e": "📈", "name": "chart increasing"},
+  {"e": "📉", "name": "chart decreasing"},
+  {"e": "📌", "name": "pushpin"},
+  {"e": "📎", "name": "paperclip"},
+  {"e": "🔒", "name": "locked"},
+  {"e": "🔑", "name": "key"},
+  {"e": "🔨", "name": "hammer"},
+  {"e": "🏹", "name": "bow and arrow"},
+  {"e": "🔧", "name": "wrench"},
+  {"e": "🔗", "name": "link"},
+  {"e": "🧰", "name": "toolbox"},
+  {"e": "🧲", "name": "magnet"},
+  {"e": "🧪", "name": "test tube"},
+  {"e": "🧬", "name": "dna"},
+  {"e": "🔬", "name": "microscope"},
+  {"e": "🔭", "name": "telescope"},
+  {"e": "📡", "name": "satellite antenna"},
+  {"e": "🚪", "name": "door"},
+  {"e": "🛁", "name": "bathtub"},
+  {"e": "🧹", "name": "broom"},
+  {"e": "🛒", "name": "shopping cart"},
+  {"e": "🧿", "name": "nazar amulet"},
+  {"e": "🗿", "name": "moai"},
+];
 const GLYPH_BY_CHAR = new Map(GLYPHS.map(g => [g.c, g]));
+const EMOJI_BY_CHAR = new Map(EMOJI.map(x => [x.e, x]));
 
 export default {
   async fetch(request, env) {
@@ -201,7 +642,7 @@ async function codes(url, env) {
   if (!env.CODES) {
     return json({ error: "Codes aren't set up on this Worker yet" }, 503);
   }
-  const list = [...new Set((url.searchParams.get("c") || "").split(",").map(c => c.trim()).filter(Boolean))];
+  const list = [...new Set((url.searchParams.get("c") || "").split(",").map(c => stripVS(c).trim()).filter(Boolean))];
   if (!list.length || list.length > 50) {
     return json({ error: "Pass 1 to 50 codes, separated by commas, as ?c=" }, 400);
   }
@@ -226,8 +667,10 @@ async function suggest(request, env) {
   const target = await parseTarget(body);
   if (!target) return json({ error: "Send a song id or a playlist" }, 400);
 
-  const existing = await existingCodes(env, target);
-  if (existing) return json({ existing: true, ...existing });
+  // Codes the song already has stay; only kinds it doesn't have yet get suggestions
+  const saved = (await existingCodes(env, target)) || {};
+  const missing = SCRIPTS.filter(s => !saved[s]);
+  if (!missing.length) return json({ existing: true, ...saved });
 
   if (!env.AI) return json({ error: "Code suggestions aren't set up on this Worker yet" }, 503);
   const songs = await songsFor(target, env);
@@ -235,20 +678,20 @@ async function suggest(request, env) {
 
   const words = await loadWords();
   const prompt = buildPrompt(songs, target.type === "playlist");
-  let zh = { cands: [], alts: [] }, eg = { cands: [], alts: [] };
-  for (let attempt = 0; attempt < 2 && (!zh.cands.length || !eg.cands.length); attempt++) {
+  const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji };
+  const built = Object.fromEntries(missing.map(s => [s, { cands: [], alts: [] }]));
+  for (let attempt = 0; attempt < 2 && missing.some(s => !built[s].cands.length); attempt++) {
     const ai = await askAI(env, prompt);
-    if (!zh.cands.length) zh = readChinese(ai, words);
-    if (!eg.cands.length) eg = readGlyphs(ai);
+    for (const s of missing) if (!built[s].cands.length) built[s] = readers[s](ai);
   }
-  if (!zh.cands.length && !eg.cands.length) {
+  if (missing.every(s => !built[s].cands.length)) {
+    if (Object.keys(saved).length) return json({ existing: true, ...saved });
     return json({ error: "Couldn't come up with codes for this one. Try again." }, 502);
   }
-  const [zhPick, egPick] = await Promise.all([
-    pickFree(env, "zh", zh, target, words),
-    pickFree(env, "eg", eg, target, words),
-  ]);
-  return json({ existing: false, zh: zhPick, eg: egPick, about: songs.map(songLabel) });
+  const picks = await Promise.all(missing.map(s => pickFree(env, s, built[s], target, words)));
+  const out = { ...saved };
+  missing.forEach((s, i) => { if (picks[i]) out[s] = { ...picks[i], saved: false }; });
+  return json({ existing: false, ...out, about: songs.map(songLabel) });
 }
 
 const SYSTEM = "You name songs with short, poetic codes for Spotiky, a music link app. You write in your own words, never quote song lyrics, and reply with JSON only.";
@@ -268,14 +711,19 @@ Chinese: give 3 different codes. Each is 2 common Simplified Chinese characters 
 Hieroglyphs: give 3 different codes. Each is 2 signs taken only from this list (sign, name: meaning):
 ${glyphLines}
 
-For both scripts, also give 4 alternatives for each position of your first code: characters or signs that would also fit in that spot.
+Emoji: give 3 different codes. Each is 2 emoji, taken only from this list, that tell the ${what}'s story at a glance:
+${EMOJI.map(x => x.e).join("")}
+
+For all three kinds, also give 4 alternatives for each position of your first code: characters, signs or emoji that would also fit in that spot.
 Write each "why" as one short English line, under 12 words, about the ${what}.
 
 Reply with JSON only, in exactly this shape:
 {"zh":[{"code":"..","chars":[{"char":"..","meaning":".."},{"char":"..","meaning":".."}],"word":null,"why":".."}],
 "zh_alts":[[{"char":"..","meaning":".."}],[{"char":"..","meaning":".."}]],
 "eg":[{"code":"..","why":".."}],
-"eg_alts":[["..",".."],["..",".."]]}
+"eg_alts":[["..",".."],["..",".."]],
+"em":[{"code":"..","why":".."}],
+"em_alts":[["..",".."],["..",".."]]}
 /no_think`;
 }
 
@@ -345,6 +793,25 @@ function glyphChar(ch) {
   return { char: ch, name: g ? g.name : "", meaning: g ? g.meaning : "" };
 }
 
+function readEmoji(ai) {
+  const cands = [];
+  for (const c of Array.isArray(ai && ai.em) ? ai.em : []) {
+    const code = typeof (c && c.code) === "string" ? stripVS(c.code).replace(/\s+/g, "") : "";
+    if (emProblem(code) || cands.some(x => x.code === code)) continue;
+    cands.push({ code, chars: [...code].map(emojiChar), why: text(c.why, 90) });
+  }
+  const alts = [0, 1].map(i => {
+    const list = Array.isArray(ai && ai.em_alts) && Array.isArray(ai.em_alts[i]) ? ai.em_alts[i] : [];
+    return list.map(a => stripVS(typeof a === "string" ? a : (a && a.char) || "")).filter(a => EMOJI_BY_CHAR.has(a)).map(emojiChar);
+  });
+  return { cands, alts };
+}
+
+function emojiChar(ch) {
+  const x = EMOJI_BY_CHAR.get(ch);
+  return { char: ch, name: x ? x.name : "", meaning: x ? x.name : "" };
+}
+
 // The first suggestion nobody else has. If every one is taken, add a third character.
 async function pickFree(env, script, built, target, words) {
   if (!built.cands.length) return null;
@@ -384,14 +851,19 @@ async function claim(request, env) {
   const target = await parseTarget(body);
   if (!target) return json({ error: "Send a song id or a playlist" }, 400);
 
-  const already = await existingCodes(env, target);
-  if (already) return json({ existing: true, ...already });
-
-  const zh = typeof (body.zh && body.zh.code) === "string" ? body.zh.code.trim() : null;
-  const eg = typeof (body.eg && body.eg.code) === "string" ? body.eg.code.replace(/\s+/g, "") : null;
-  if (!zh && !eg) return json({ error: "Send a Chinese code, a hieroglyph code or both" }, 400);
-  for (const [script, code] of [["zh", zh], ["eg", eg]]) {
-    if (!code) continue;
+  // Kinds of code the song already has stay as they are; only new kinds get saved
+  const rec = (await env.CODES.get(target.key, "json")) || {};
+  const saved = (await existingCodes(env, target)) || {};
+  const codes = {};
+  for (const s of SCRIPTS) {
+    const raw = body[s] && typeof body[s].code === "string" ? stripVS(body[s].code).replace(/\s+/g, "") : "";
+    if (raw && !rec[s]) codes[s] = raw;
+  }
+  if (!Object.keys(codes).length) {
+    if (Object.keys(saved).length) return json({ existing: true, ...saved });
+    return json({ error: "Send a Chinese, hieroglyph or emoji code" }, 400);
+  }
+  for (const [script, code] of Object.entries(codes)) {
     const why = problem(script, code);
     if (why) return json({ error: why, script, code }, 400);
     if (!(await isFree(env, script, code, target))) {
@@ -402,46 +874,61 @@ async function claim(request, env) {
   const at = new Date().toISOString();
   const base = target.type === "track" ? { type: "track", id: target.id } : { type: "playlist", items: target.items };
   const writes = [];
-  let zhOut = null, egOut = null;
-  if (zh) {
+  const out = {};
+  if (codes.zh) {
+    const zh = codes.zh;
     const words = await loadWords();
     const given = Array.isArray(body.zh.chars) ? body.zh.chars : [];
     const chars = [...zh].map((ch, i) => ({ char: ch, meaning: text(given[i] && given[i].char === ch ? given[i].meaning : "", 30) }));
-    zhOut = { code: zh, chars, word: wordFor(zh, words) || text(body.zh.word, 40) || null, why: text(body.zh.why, 90) };
-    writes.push(env.CODES.put(zh, JSON.stringify({ ...base, script: "zh", chars, word: zhOut.word, why: zhOut.why, at })));
+    out.zh = { code: zh, chars, word: wordFor(zh, words) || text(body.zh.word, 40) || null, why: text(body.zh.why, 90), saved: true };
+    writes.push(env.CODES.put(zh, JSON.stringify({ ...base, script: "zh", chars, word: out.zh.word, why: out.zh.why, at })));
     if (hasShapeChar(zh)) writes.push(env.CODES.put(shapeKey(zh), zh));
   }
-  if (eg) {
-    egOut = { code: eg, chars: [...eg].map(glyphChar), why: text(body.eg.why, 90) };
-    writes.push(env.CODES.put(eg, JSON.stringify({ ...base, script: "eg", why: egOut.why, at })));
+  if (codes.eg) {
+    out.eg = { code: codes.eg, chars: [...codes.eg].map(glyphChar), why: text(body.eg.why, 90), saved: true };
+    writes.push(env.CODES.put(codes.eg, JSON.stringify({ ...base, script: "eg", why: out.eg.why, at })));
   }
-  writes.push(env.CODES.put(target.key, JSON.stringify({ zh, eg, at })));
+  if (codes.em) {
+    out.em = { code: codes.em, chars: [...codes.em].map(emojiChar), why: text(body.em.why, 90), saved: true };
+    writes.push(env.CODES.put(codes.em, JSON.stringify({ ...base, script: "em", why: out.em.why, at })));
+  }
+  const merged = { at: rec.at || at };
+  for (const s of SCRIPTS) merged[s] = rec[s] || codes[s] || null;
+  writes.push(env.CODES.put(target.key, JSON.stringify(merged)));
   await Promise.all(writes);
-  return json({ existing: false, zh: zhOut, eg: egOut });
+  return json({ existing: Object.keys(saved).length > 0, ...saved, ...out });
 }
 
+// The codes a song or playlist already has: { zh?, eg?, em? }, each marked saved
 async function existingCodes(env, target) {
   const rec = await env.CODES.get(target.key, "json");
-  if (!rec) return null;
-  const [zhRec, egRec] = await Promise.all([
-    rec.zh ? env.CODES.get(rec.zh, "json") : null,
-    rec.eg ? env.CODES.get(rec.eg, "json") : null,
-  ]);
-  return {
-    zh: rec.zh ? {
-      code: rec.zh,
-      chars: zhRec && Array.isArray(zhRec.chars) ? zhRec.chars : [...rec.zh].map(ch => ({ char: ch, meaning: "" })),
-      word: (zhRec && zhRec.word) || null,
-      why: (zhRec && zhRec.why) || "",
-    } : null,
-    eg: rec.eg ? { code: rec.eg, chars: [...rec.eg].map(glyphChar), why: (egRec && egRec.why) || "" } : null,
-  };
+  if (!rec || !SCRIPTS.some(s => rec[s])) return null;
+  const recs = await Promise.all(SCRIPTS.map(s => (rec[s] ? env.CODES.get(rec[s], "json") : null)));
+  const out = {};
+  SCRIPTS.forEach((s, i) => {
+    const code = rec[s];
+    if (!code) return;
+    const r = recs[i] || {};
+    if (s === "zh") {
+      out.zh = { code, chars: Array.isArray(r.chars) ? r.chars : [...code].map(ch => ({ char: ch, meaning: "" })), word: r.word || null, why: r.why || "", saved: true };
+    } else {
+      out[s] = { code, chars: [...code].map(s === "eg" ? glyphChar : emojiChar), why: r.why || "", saved: true };
+    }
+  });
+  return out;
 }
 
 // ---- Rules for codes -------------------------------------------------------------------
 
 function problem(script, code) {
-  return script === "zh" ? zhProblem(code) : egProblem(code);
+  return script === "zh" ? zhProblem(code) : script === "eg" ? egProblem(code) : emProblem(code);
+}
+
+function emProblem(code) {
+  const cs = [...String(code || "")];
+  if (cs.length < 2 || cs.length > 3) return "An emoji code needs 2 or 3 emoji";
+  if (!cs.every(c => EMOJI_BY_CHAR.has(c))) return "Emoji codes use emoji from the Spotiky set only";
+  return null;
 }
 
 function zhProblem(code) {
@@ -484,7 +971,7 @@ async function parseTarget(body) {
     return { type: "track", id: body.id, key: "track:" + body.id };
   }
   if (body.type === "playlist" && typeof body.items === "string") {
-    const items = body.items.trim();
+    const items = stripVS(body.items).trim();
     const tokens = items.split(",");
     if (!items || items.length > 4000 || tokens.length > 100 || !tokens.every(t => ITEM_RE.test(t))) return null;
     return { type: "playlist", items, key: "list:" + (await sha256(items)) };

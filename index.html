@@ -110,6 +110,7 @@
     .share-error { font-size: 0.85rem; color: #f15e6c; margin: 0; }
     .share-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
     .code-card { background: #222; border-radius: 10px; padding: 12px; min-width: 0; display: flex; flex-direction: column; }
+    .share-codes > .code-card:last-child:nth-child(odd) { grid-column: 1 / -1; }   /* a third card takes the whole row */
     .code-label { font-size: 0.7rem; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; }
     .code-chars { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
     label.char { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 48px; padding: 4px 6px 6px; margin: 0; border-radius: 8px; color: #fff; font-size: 1rem; }
@@ -117,6 +118,7 @@
     label.char.pickable:hover, label.char.pickable:focus-within { background: #353535; box-shadow: inset 0 0 0 1px #1DB954; }
     .char .big { font-size: 34px; line-height: 1.25; }
     .code-chars.eg .big { font-family: "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", "Apple Symbols", sans-serif; }
+    .code-chars.em .big { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
     .char .mean { font-size: 0.7rem; color: #b3b3b3; max-width: 76px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
     .char select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
     .code-word { font-size: 0.75rem; color: #b3b3b3; margin: 4px 0 0; }
@@ -166,7 +168,7 @@
 
     <div class="label">Songs</div>
     <div id="rows"></div>
-    <p class="row-help">Paste song links or Spotiky codes, one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>. After a code, the time can go right after it: <code>夜光1:23-1:45</code>.</p>
+    <p class="row-help">Paste song links or Spotiky codes, one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>. After a code, the time can go right after it: <code>夜光1:23-1:45</code> or <code>🌃💡1:23-1:45</code>.</p>
 
     <button onclick="playPlaylist(0)">Play playlist</button>
     <div class="pair" id="plControls" hidden>
@@ -202,7 +204,7 @@
     Otherwise you'll get a short preview.<br><br>
     Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code> or <code>$1.23</code><br>
     Clips: <code>open.spotiky.com/track/ID$1:23-1:45</code><br>
-    Codes: <code>spotiky.com/夜光1:23-1:45</code><br><br>
+    Codes: <code>spotiky.com/夜光1:23-1:45</code> or <code>spotiky.com/🌃💡1:23-1:45</code><br><br>
     <a href="/playlist">Make a playlist →</a>
   </p>
   <p class="hint" id="playlistHint" hidden>
@@ -290,7 +292,8 @@
     // A code is a few Chinese characters or hieroglyphs that stand for a song. Times
     // can follow a code directly, because code characters and digits can't run together:
     //   /夜光83-105   /track/夜光1:23-1:45   /夜光.4-.8   /夜光$1.23   /𓇰𓇶3.23-3.24
-    const CODE_CHARS = String.raw`\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}`;
+    const CODE_CHARS = String.raw`\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}`;
+    const stripVS = s => String(s).replace(/[︎️]/g, '');   // ❤️ and ❤ are one code
     const CODE_RANGE_RE = new RegExp(String.raw`^(?:\$|[?&]t=|\.)?` + RANGE, 'i');
     const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
     const CODE_IN_TEXT_RE = new RegExp(String.raw`(?:^|\/)(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
@@ -302,13 +305,13 @@
 
     // A code link's path: /夜光83-105 or /track/夜光1:23-1:45
     function parseCodePath(path) {
-      const m = decodeSafe(String(path)).match(CODE_IN_PATH_RE);
+      const m = stripVS(decodeSafe(String(path))).match(CODE_IN_PATH_RE);
       return m ? { code: m[1], ...parseCodeRange(m[2]) } : null;
     }
 
     // A code typed or pasted anywhere: 夜光1:23, spotiky.com/夜光83, open.spotiky.com/track/夜光
     function parseCodeText(text) {
-      const s = decodeSafe(String(text).trim());
+      const s = stripVS(decodeSafe(String(text).trim()));
       if (/spotify\.com|^spotify:/i.test(s)) return null;   // Spotify's own links never hold codes
       const m = s.match(CODE_IN_TEXT_RE);
       return m ? { code: m[1], ...parseCodeRange(m[2]) } : null;
@@ -1104,7 +1107,8 @@
     // The Worker suggests a Chinese code and a hieroglyph code from what the song or
     // playlist is about. Tap a character to swap it. Copying a link saves both codes,
     // first come, first served; after that they belong to this song for good.
-    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs' };
+    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji' };
+    const SCRIPTS = ['zh', 'eg', 'em'];
     let share = null;   // { target, suffix, linkFor, existing, zh, eg, busy }
 
     function h(tag, cls, text) {
@@ -1168,17 +1172,15 @@
 
     async function openShare(target, suffix, linkFor) {
       const panel = document.getElementById('sharePanel');
-      share = { target, suffix, linkFor, existing: false, zh: null, eg: null, busy: false };
+      share = { target, suffix, linkFor, zh: null, eg: null, em: null, busy: false };
       const mine = share;
       panel.hidden = false;
       panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
       const { ok, status, data } = await postWorker('/suggest', target);
       if (share !== mine) return;   // a newer share started meanwhile
       if (!ok) return showShareError(status, data);
-      share.existing = !!data.existing;
-      share.zh = data.zh || null;
-      share.eg = data.eg || null;
-      if (!share.zh && !share.eg) return showShareError(502, {});
+      for (const s of SCRIPTS) share[s] = data[s] || null;   // each one is saved already, or a suggestion
+      if (!SCRIPTS.some(s => share[s])) return showShareError(502, {});
       renderShare();
     }
 
@@ -1209,10 +1211,10 @@
       if (!share) return;
       const what = share.target.type === 'track' ? 'song' : 'playlist';
       const cards = h('div', 'share-codes');
-      for (const script of ['zh', 'eg']) if (share[script]) cards.append(codeCard(script));
-      const note = share.existing
+      for (const script of SCRIPTS) if (share[script]) cards.append(codeCard(script));
+      const note = SCRIPTS.every(s => !share[s] || share[s].saved)
         ? `These are this ${what}'s codes. They stay the same for everyone.`
-        : `Tap a character to swap it. Copying a link saves both codes for this ${what}, first come, first served.`;
+        : `Tap a character to swap it. Copying a link saves the new codes for this ${what}, first come, first served.`;
       document.getElementById('sharePanel').replaceChildren(shareHead(), cards, h('p', 'share-note', note));
     }
 
@@ -1236,7 +1238,7 @@
     }
 
     function charLabel(script, ch) {
-      return script === 'eg' ? (ch.name || ch.meaning || '') : (ch.meaning || '');
+      return script === 'zh' ? (ch.meaning || '') : (ch.name || ch.meaning || '');
     }
 
     function charPicker(script, i) {
@@ -1246,11 +1248,12 @@
       big.setAttribute('aria-hidden', 'true');
       wrap.append(big, h('span', 'mean', charLabel(script, ch)));
       const options = (c.options && c.options[i]) || [];
-      if (!share.existing && options.length > 1) {
+      if (!c.saved && options.length > 1) {
         const sel = document.createElement('select');
-        sel.setAttribute('aria-label', `${script === 'zh' ? 'Character' : 'Sign'} ${i + 1}: ${ch.char} ${charLabel(script, ch)}. Change it`);
+        const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji' }[script];
+        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${ch.char} ${charLabel(script, ch)}. Change it`);
         for (const o of options) {
-          const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : o.meaning;
+          const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : script === 'em' ? o.name : o.meaning;
           const opt = h('option', null, meaning ? `${o.char}  ${meaning}` : o.char);
           opt.value = o.char;
           opt.selected = o.char === ch.char;
@@ -1297,7 +1300,7 @@
     // so browsers that only allow copying during a tap (Safari) still copy it
     function copyCode(script) {
       if (!share || share.busy) return;
-      const linkPromise = share.existing ? Promise.resolve(shareLink(script)) : claimShare(script);
+      const linkPromise = share[script].saved ? Promise.resolve(shareLink(script)) : claimShare(script);
       let copying;
       if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
         const blob = linkPromise.then(link => new Blob([link], { type: 'text/plain' }));
@@ -1324,9 +1327,11 @@
     async function claimShare(script) {
       share.busy = true;
       setCardNote(script, 'Saving…', true);
-      const body = { ...share.target };
-      if (share.zh) body.zh = { code: share.zh.code, chars: share.zh.chars, why: share.zh.why };
-      if (share.eg) body.eg = { code: share.eg.code, why: share.eg.why };
+      const body = { ...share.target };   // only codes not saved yet; saved ones never change
+      for (const s of SCRIPTS) {
+        const c = share[s];
+        if (c && !c.saved) body[s] = s === 'zh' ? { code: c.code, chars: c.chars, why: c.why } : { code: c.code, why: c.why };
+      }
       const mine = share;
       const { ok, status, data } = await postWorker('/claim', body);
       mine.busy = false;
@@ -1341,9 +1346,8 @@
         }
         throw new Error('not saved');
       }
-      share.existing = true;
-      share.zh = data.zh || null;   // when another sharer saved this song first, theirs come back
-      share.eg = data.eg || null;
+      // what's saved now; when another sharer saved this song first, theirs come back
+      for (const s of SCRIPTS) share[s] = data[s] || (share[s] && share[s].saved ? share[s] : null);
       renderShare();
       if (!share[script]) throw new Error('no code');
       return shareLink(script);
