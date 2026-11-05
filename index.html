@@ -15,7 +15,8 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* the hieroglyph font is a fallback, so codes like 𓇰𓇶 show even where the system lacks one */
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", sans-serif;
       max-width: 520px;
       margin: 0 auto;
       padding: 32px 20px;
@@ -36,9 +37,11 @@
       border: none;
       background: #282828;
       color: white;
+      font-family: inherit;
     }
     input:focus { outline: 2px solid #1DB954; }
     button {
+      font-family: inherit;
       width: 100%;
       padding: 14px;
       margin-top: 8px;
@@ -97,7 +100,37 @@
     .notice { margin: 16px 0; background: #181818; border-radius: 12px; padding: 16px; font-size: 0.9rem; color: #b3b3b3; }
     .notice strong { display: block; color: #fff; margin-bottom: 4px; }
     .notice a { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: 8px; background: #1DB954; color: #fff; font-weight: 600; text-decoration: none; }
+
+    /* Share as a code: a Chinese card and a hieroglyph card, each character swappable */
+    .share { margin-top: 16px; background: #181818; border-radius: 12px; padding: 14px 14px 16px; }
+    .share-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-weight: 600; }
+    .share-head button { width: 32px; height: 32px; padding: 0; margin: 0; background: transparent; color: #b3b3b3; font-weight: 400; }
+    .share-head button:hover { background: #282828; color: #fff; }
+    .share-wait, .share-note { font-size: 0.8rem; color: #b3b3b3; margin: 10px 0 0; }
+    .share-error { font-size: 0.85rem; color: #f15e6c; margin: 0; }
+    .share-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .code-card { background: #222; border-radius: 10px; padding: 12px; min-width: 0; display: flex; flex-direction: column; }
+    .code-label { font-size: 0.7rem; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; }
+    .code-chars { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+    label.char { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 48px; padding: 4px 6px 6px; margin: 0; border-radius: 8px; color: #fff; font-size: 1rem; }
+    label.char.pickable { cursor: pointer; background: #2c2c2c; }
+    label.char.pickable:hover, label.char.pickable:focus-within { background: #353535; box-shadow: inset 0 0 0 1px #1DB954; }
+    .char .big { font-size: 34px; line-height: 1.25; }
+    .code-chars.eg .big { font-family: "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", "Apple Symbols", sans-serif; }
+    .char .mean { font-size: 0.7rem; color: #b3b3b3; max-width: 76px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
+    .char select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+    .code-word { font-size: 0.75rem; color: #b3b3b3; margin: 4px 0 0; }
+    .code-why { font-size: 0.8rem; color: #ddd; margin: 6px 0 0; font-style: italic; }
+    .code-note { font-size: 0.75rem; color: #f15e6c; margin: 6px 0 0; overflow-wrap: anywhere; }
+    .code-note:empty { display: none; }
+    .code-note.ok { color: #1DB954; }
+    .code-card .copy-code { margin-top: auto; padding: 10px; font-size: 0.85rem; }
+    .code-card .copy-code:disabled { opacity: 0.45; cursor: default; }
+    .code-card .copy-code:disabled:hover { background: #282828; }
   </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap">
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
@@ -121,6 +154,7 @@
 
     <button onclick="play()">Play from timestamp</button>
     <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
+    <button class="secondary" onclick="shareTrack()">Share as a code</button>
   </section>
 
   <section id="playlistView" hidden>
@@ -140,7 +174,10 @@
       <button class="secondary" onclick="plStep(1)">Next ⏭</button>
     </div>
     <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
+    <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
   </section>
+
+  <div id="sharePanel" class="share" hidden></div>
 
   <div id="status">Waiting for player…</div>
   <button id="replayBtn" class="secondary" hidden></button>
@@ -320,6 +357,7 @@
 
     function cleanCodeRecord(r) {
       if (r && r.type === 'track' && /^[a-zA-Z0-9]{22}$/.test(r.id)) return { type: 'track', id: r.id };
+      if (r && r.type === 'playlist' && typeof r.items === 'string' && r.items.length <= 4000) return { type: 'playlist', items: r.items };
       return null;
     }
 
@@ -603,6 +641,10 @@
       setStatus(`Looking up ${code}…`);
       try {
         const rec = await lookupCode(code);
+        if (rec && rec.type === 'playlist') {   // a playlist's code: open the playlist page
+          location.replace('/playlist/' + code);
+          return null;
+        }
         if (rec) return rec.id;
         setStatus(`No song has the code ${code} yet.`);
       } catch (e) {
@@ -848,8 +890,15 @@
       };
       item.lookup = lookupCode(item.code).then(rec => {
         if (row.item !== item) return;
-        if (rec) { item.id = rec.id; showRowSong(row, item); }
-        else fail(`No song has the code ${item.code} yet`);
+        if (rec && rec.type === 'playlist') {
+          if (row.fromList) fail("A playlist can't go inside another playlist");
+          else return expandListRow(row, item, rec);
+        } else if (rec) {
+          item.id = rec.id;
+          showRowSong(row, item);
+        } else {
+          fail(`No song has the code ${item.code} yet`);
+        }
         onRowsChanged();
       }, () => {
         if (row.item !== item) return;
@@ -862,7 +911,29 @@
     function onRowsChanged() {
       let n = 0;
       for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item && !row.item.missing ? ++n : '';
-      history.replaceState(null, '', playlistPath(currentItems()));
+      const path = playlistPath(currentItems());
+      // A playlist opened from its code keeps the short link until its songs change
+      history.replaceState(null, '', listCode && path === '/playlist/' + listCode.items ? '/playlist/' + listCode.code : path);
+    }
+
+    // A playlist code in a row turns into that playlist's songs (one level deep)
+    let listCode = null;
+    function expandListRow(row, item, rec) {
+      const pieces = splitLinks(rec.items);
+      const onlyRow = [...rowsEl.children].filter(r => r.item).length === 1;
+      if (onlyRow) listCode = { code: item.code, items: rec.items };
+      let last = row;
+      pieces.forEach((p, i) => {
+        if (i === 0) {
+          row.fromList = true;
+          row.querySelector('input').value = p;
+          refreshRow(row);
+        } else {
+          last = addRow(p, last);
+          last.fromList = true;
+        }
+      });
+      onRowsChanged();
     }
 
     function currentItems() {
@@ -1028,6 +1099,258 @@
       addRow('');   // an empty row, ready for pasting
       onRowsChanged();
     }
+
+    // ---- Share as a code ------------------------------------------------------------
+    // The Worker suggests a Chinese code and a hieroglyph code from what the song or
+    // playlist is about. Tap a character to swap it. Copying a link saves both codes,
+    // first come, first served; after that they belong to this song for good.
+    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs' };
+    let share = null;   // { target, suffix, linkFor, existing, zh, eg, busy }
+
+    function h(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+
+    async function postWorker(path, body) {
+      try {
+        const res = await fetch(`${PREVIEW_WORKER}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        return { ok: res.ok, status: res.status, data: data || {} };
+      } catch (e) {
+        return { ok: false, status: 0, data: {} };
+      }
+    }
+
+    async function shareTrack() {
+      const raw = document.getElementById('link').value;
+      const timeBox = document.getElementById('time').value.trim();
+      const endBox = document.getElementById('endTime').value.trim();
+      const coded = parseCodeText(raw);
+      let id, start, end;
+      if (coded) {
+        start = parseTime(timeBox || coded.time || '0');
+        end = cleanEnd(start, endBox || coded.end);
+        id = await resolveTrackCode(coded.code);
+        if (!id) return;
+      } else {
+        id = extractTrackId(raw);
+        start = parseTime(timeBox);
+        end = cleanEnd(start, endBox);
+      }
+      if (!id) {
+        setStatus('Enter a track first');
+        return;
+      }
+      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`);
+    }
+
+    async function sharePlaylist() {
+      const pending = [...rowsEl.children]
+        .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing)
+        .map(r => r.item.lookup);
+      if (pending.length) await Promise.allSettled(pending);
+      const items = [...rowsEl.children].map(r => r.item).filter(it => it && it.id);
+      if (!items.length) {
+        setStatus('Add at least one song first');
+        return;
+      }
+      const list = playlistPath(items).replace(/^\/playlist\//, '');
+      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`);
+    }
+
+    async function openShare(target, suffix, linkFor) {
+      const panel = document.getElementById('sharePanel');
+      share = { target, suffix, linkFor, existing: false, zh: null, eg: null, busy: false };
+      const mine = share;
+      panel.hidden = false;
+      panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
+      const { ok, status, data } = await postWorker('/suggest', target);
+      if (share !== mine) return;   // a newer share started meanwhile
+      if (!ok) return showShareError(status, data);
+      share.existing = !!data.existing;
+      share.zh = data.zh || null;
+      share.eg = data.eg || null;
+      if (!share.zh && !share.eg) return showShareError(502, {});
+      renderShare();
+    }
+
+    function shareHead() {
+      const head = h('div', 'share-head');
+      head.append(h('span', null, 'Share as a code'));
+      const close = h('button', null, '✕');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', closeShare);
+      head.append(close);
+      return head;
+    }
+
+    function closeShare() {
+      share = null;
+      document.getElementById('sharePanel').hidden = true;
+    }
+
+    function showShareError(status, data) {
+      const msg = status === 503 ? "Codes aren't switched on yet. The Spotiky Worker needs its CODES and AI bindings."
+        : status === 0 ? "Couldn't reach Spotiky's code service. Check your connection and try again."
+        : (data && data.error) || 'Something went wrong making codes. Try again.';
+      document.getElementById('sharePanel').replaceChildren(shareHead(), h('p', 'share-error', msg));
+    }
+
+    function renderShare() {
+      if (!share) return;
+      const what = share.target.type === 'track' ? 'song' : 'playlist';
+      const cards = h('div', 'share-codes');
+      for (const script of ['zh', 'eg']) if (share[script]) cards.append(codeCard(script));
+      const note = share.existing
+        ? `These are this ${what}'s codes. They stay the same for everyone.`
+        : `Tap a character to swap it. Copying a link saves both codes for this ${what}, first come, first served.`;
+      document.getElementById('sharePanel').replaceChildren(shareHead(), cards, h('p', 'share-note', note));
+    }
+
+    function codeCard(script) {
+      const c = share[script];
+      const card = h('section', 'code-card');
+      card.dataset.script = script;
+      card.append(h('div', 'code-label', SCRIPT_NAMES[script]));
+      const chars = h('div', 'code-chars ' + script);
+      c.chars.forEach((ch, i) => chars.append(charPicker(script, i)));
+      card.append(chars);
+      if (script === 'zh' && c.word) card.append(h('p', 'code-word', `Also a word: ${c.word}`));
+      if (c.why) card.append(h('p', 'code-why', c.why));
+      card.append(h('p', 'code-note', c.taken ? 'Taken by another song. Swap a character.' : ''));
+      const btn = h('button', 'secondary copy-code', `Copy ${c.code} link`);
+      btn.type = 'button';
+      btn.disabled = !!c.taken;
+      btn.addEventListener('click', () => copyCode(script));
+      card.append(btn);
+      return card;
+    }
+
+    function charLabel(script, ch) {
+      return script === 'eg' ? (ch.name || ch.meaning || '') : (ch.meaning || '');
+    }
+
+    function charPicker(script, i) {
+      const c = share[script], ch = c.chars[i];
+      const wrap = h('label', 'char');
+      const big = h('span', 'big', ch.char);
+      big.setAttribute('aria-hidden', 'true');
+      wrap.append(big, h('span', 'mean', charLabel(script, ch)));
+      const options = (c.options && c.options[i]) || [];
+      if (!share.existing && options.length > 1) {
+        const sel = document.createElement('select');
+        sel.setAttribute('aria-label', `${script === 'zh' ? 'Character' : 'Sign'} ${i + 1}: ${ch.char} ${charLabel(script, ch)}. Change it`);
+        for (const o of options) {
+          const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : o.meaning;
+          const opt = h('option', null, meaning ? `${o.char}  ${meaning}` : o.char);
+          opt.value = o.char;
+          opt.selected = o.char === ch.char;
+          sel.append(opt);
+        }
+        sel.addEventListener('change', () => swapChar(script, i, sel.value));
+        wrap.append(sel);
+        wrap.classList.add('pickable');
+      }
+      return wrap;
+    }
+
+    async function swapChar(script, i, value) {
+      const c = share[script];
+      const pick = (c.options[i] || []).find(o => o.char === value);
+      if (!pick) return;
+      c.chars = c.chars.map((ch, j) => (j === i ? pick : ch));
+      c.code = c.chars.map(ch => ch.char).join('');
+      c.word = null;   // the "also a word" note was for the suggested pair; saving checks again
+      c.taken = false;
+      renderShare();
+      try {   // warn early when another song has it (saving checks again, look-alikes too)
+        const rec = await lookupCode(c.code);
+        if (share && share[script] === c && rec && !sameShareTarget(rec)) {
+          c.taken = true;
+          renderShare();
+        }
+      } catch (e) {}
+    }
+
+    function sameShareTarget(rec) {
+      const t = share.target;
+      return rec.type === t.type && (t.type === 'track' ? rec.id === t.id : rec.items === t.items);
+    }
+
+    function setCardNote(script, text, ok) {
+      const note = document.querySelector(`#sharePanel .code-card[data-script="${script}"] .code-note`);
+      if (!note) return;
+      note.textContent = text;
+      note.classList.toggle('ok', !!ok);
+    }
+
+    // Copy right away, inside the tap, with the link filled in once the codes are saved,
+    // so browsers that only allow copying during a tap (Safari) still copy it
+    function copyCode(script) {
+      if (!share || share.busy) return;
+      const linkPromise = share.existing ? Promise.resolve(shareLink(script)) : claimShare(script);
+      let copying;
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        const blob = linkPromise.then(link => new Blob([link], { type: 'text/plain' }));
+        copying = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+      } else if (navigator.clipboard) {
+        copying = linkPromise.then(link => navigator.clipboard.writeText(link));
+      } else {
+        copying = Promise.reject(new Error('no clipboard'));
+      }
+      copying.then(() => true, () => false).then(copied => linkPromise.then(link => {
+        if (copied) {
+          setCardNote(script, 'Link copied!', true);
+          setStatus('Link copied!');
+        } else {
+          setCardNote(script, link, true);   // copying was refused: show the link to copy by hand
+        }
+      }, () => {}));
+    }
+
+    function shareLink(script) {
+      return share.linkFor(share[script].code) + share.suffix;
+    }
+
+    async function claimShare(script) {
+      share.busy = true;
+      setCardNote(script, 'Saving…', true);
+      const body = { ...share.target };
+      if (share.zh) body.zh = { code: share.zh.code, chars: share.zh.chars, why: share.zh.why };
+      if (share.eg) body.eg = { code: share.eg.code, why: share.eg.why };
+      const mine = share;
+      const { ok, status, data } = await postWorker('/claim', body);
+      mine.busy = false;
+      if (share !== mine) throw new Error('closed');
+      if (!ok) {
+        if (status === 409 && data.script && share[data.script]) {
+          share[data.script].taken = true;
+          renderShare();
+          setCardNote(data.script, `${data.code} just went to another song. Swap a character.`);
+        } else {
+          showShareError(status, data);
+        }
+        throw new Error('not saved');
+      }
+      share.existing = true;
+      share.zh = data.zh || null;   // when another sharer saved this song first, theirs come back
+      share.eg = data.eg || null;
+      renderShare();
+      if (!share[script]) throw new Error('no code');
+      return shareLink(script);
+    }
+
+    // A different song in the box means the open share card is out of date
+    document.getElementById('link').addEventListener('input', () => { if (share) closeShare(); });
 
     window.onSpotifyIframeApiReady = (IFrameAPI) => {
       const element = document.getElementById('embed');
