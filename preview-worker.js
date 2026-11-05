@@ -1,39 +1,61 @@
 // Spotiky Worker. Runs on Cloudflare Workers, not GitHub Pages.
 // Live at https://spotiky-preview.spotikyhq.workers.dev
 //
-//   GET  /?id=TRACK_ID     a track's preview MP3 and song name: { preview_url, name, source }
-//   GET  /codes?c=夜光,𓇰𓇶   what each Spotiky code stands for: { "夜光": {type, id, ...}, "𓇰𓇶": null }
-//   POST /suggest          { type: "track", id } or { type: "playlist", items } -> code suggestions
-//   POST /claim            the same, plus { zh: {code, chars, why}, eg: {code, why}, em: {code, why} } -> saves the codes
+// Songs
+//   GET  /?id=TRACK_ID        a track's preview MP3 and song name: { preview_url, name, source }
+//   GET  /codes?c=夜光,𓇰𓇶      which song each code stands for: { "夜光": {type: "track", id}, "𓇰𓇶": null }
+//   POST /suggest             { type: "track", id } -> code suggestions for the song
+//   POST /claim               the same, plus { zh: {code, chars, why}, eg: {code, why}, em: {code, why} } -> saves them
+// Playlists
+//   GET  /playlist?id=5mh     a saved playlist: { id, items, labels, mine }
+//   POST /playlist/suggest    { items } -> an ID and a set of four labels for the playlist
+//   POST /playlist/save       { items, labels } saves it (signed in, it's yours); { edit: id, items } changes yours
+//   GET  /playlists/mine      the signed-in person's playlists
+// Accounts: email + a 6-digit code. Signed-in requests carry "Authorization: Bearer <token>".
+//   POST /auth/start          { email } -> emails a sign-in code
+//   POST /auth/verify         { email, code } -> { token }
+//   GET  /auth/me             who's signed in
+//   POST /auth/signout        ends this sign-in
 //
-// Bindings (Worker -> Settings -> Bindings):
-//   CODES  a KV namespace that stores the codes
-//   AI     Workers AI, which suggests codes from what a song is about
+// Settings (Worker -> Settings):
+//   DB              binding to a D1 database; the Worker creates its own tables
+//   AI              binding to Workers AI, which suggests codes from what a song is about
+//   RESEND_API_KEY  secret: sends the sign-in codes (resend.com)
+//   PEPPER          secret: long random text mixed into every stored hash. Never change it.
+// Only hashes of emails, sign-in codes and sign-ins are stored, never the emails themselves.
 //
-// Previews: Spotify's Web API now returns preview_url: null, so this loads the
-// public embed page (open.spotify.com/embed/track/ID) and pulls the preview MP3
-// link out of its HTML. Song titles come from Spotify's oEmbed API, artists from
-// the embed page.
+// Songs: Spotify's Web API returns preview_url: null now, so previews come from the public
+// embed page (open.spotify.com/embed/track/ID). Titles come from Spotify's oEmbed API,
+// artists from the embed page.
 //
-// Codes: a song or playlist gets one Chinese code (2-3 common Simplified characters),
-// one hieroglyph code (2-3 signs from the Spotiky set of 98) and one emoji code (2-3
-// emoji that look the same on Windows, Mac, iPhone and Android). Codes saved for a
-// song are its codes for good, so the same song always gets the same codes; a song
-// missing a kind of code can still gain one. Skin tones aren't part of a code: 👋🏾🌙,
-// 👋🏿🌙 and 👋🌙 are one code, saved without a tone, and the person sharing picks the
-// tone for their own link. KV keys:
-//   <code>           {type: "track", id} or {type: "playlist", items}, plus meanings
-//   track:<id>       {zh, eg, em} for a song
-//   list:<hash>      {zh, eg, em} for a playlist
-//   shape:<code>     a Chinese code with look-alike characters, so 白光 blocks 自光
+// Song codes: a song gets one Chinese code (2-3 common Simplified characters), one
+// hieroglyph code (2-3 signs from the Spotiky set of 98) and one emoji code (2-3 emoji that
+// look the same on Windows, Mac, iPhone and Android). A code belongs to one song for good,
+// first come, first served. The database itself refuses a second owner, so two people
+// claiming the same code at the same moment can't both get it. Skin tones aren't part of a
+// code: 👋🏾🌙 and 👋🌙 are one code, and the person sharing picks the tone for their link.
+//
+// Playlist links: spotiky.com/playlist/<id><label>, like 5mh夜歌 or 5mh-night-drive. The ID
+// (3 or more characters from 32 that can't be mixed up) finds the playlist. The label is one
+// of a matching set in Chinese, hieroglyphs, emoji and English; labels can repeat. Saved
+// without signing in, a playlist is a snapshot whose ID comes from a fingerprint of its songs
+// and times. A signed-in person's playlist gets its own ID and stays theirs to edit.
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
+const FROM = "Spotiky <code@spotiky.com>";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const SCRIPTS = ["zh", "eg", "em"];
+const SCRIPTS = ["zh", "eg", "em"];            // kinds of song code
+const LABELS = ["zh", "eg", "em", "en"];       // kinds of playlist label
 const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}$/u;
 const ID_RE = /^[a-zA-Z0-9]{22}$/;
 const ITEM_RE = /^(?:[a-zA-Z0-9]{22}(?:\$\d+(?:-\d+)?)?|[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}(?:\d+(?:-\d+)?)?)$/u;
+const ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";   // no i, l, o or u: nothing to mix up with 1 or 0
+const PLAYLIST_ID_RE = /^[0-9a-hjkmnp-tv-z]{3,13}$/;
+const ID_BLOCK = ["ass", "sex", "fag", "fck", "fk", "kkk", "xxx", "wtf", "dck", "fap"];
+const EN_RE = /^[a-z]{2,12}(?:-[a-z]{2,12})?$/;
+const MINUTE = 60e3, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
+const CODE_MINUTES = 10, CODE_TRIES = 5, SESSION_DAYS = 30;
 const stripVS = s => String(s || "").replace(/[︎️]/g, "");   // ❤️ and ❤ are one code
 const stripTones = s => String(s || "").replace(/[\u{1F3FB}-\u{1F3FF}]/gu, "");   // so are 👋🏾 and 👋
 const canon = s => stripTones(stripVS(s));
@@ -615,93 +637,282 @@ const EMOJI = [
   {"e": "🗿", "name": "moai"},
 ];
 const TONEABLE = new Set("👋🖖👌🤞🤘🤙👍👎✊👏🙌🙏💅🤳💪👂👶👼🎅🦸🧙🧚🧛🧜🚶🏃💃🕺🧗🏂🏄🏊🤸🤹🧘🛀🛌");   // emoji whose five skin tones show everywhere (Emoji 11.0 or earlier)
+// English words a label can't use: the LDNOOBW list (github.com/LDNOOBW, CC BY 4.0)
+const EN_BLOCK = new Set(["acrotomophilia", "alabama-hot-pocket", "alaskan-pipeline", "anal", "anilingus", "anus", "apeshit", "arsehole", "ass", "asshole", "assmunch", "auto-erotic", "autoerotic", "babeland", "baby-batter", "baby-juice", "ball-gag", "ball-gravy", "ball-kicking", "ball-licking", "ball-sack", "ball-sucking", "bangbros", "bangbus", "bareback", "barely-legal", "barenaked", "bastard", "bastardo", "bastinado", "bbw", "bdsm", "beaner", "beaners", "beastiality", "beaver-cleaver", "beaver-lips", "bestiality", "big-black", "big-breasts", "big-knockers", "big-tits", "bimbos", "birdlock", "bitch", "bitches", "black-cock", "blonde-action", "blonde-on-blonde-action", "blow-job", "blow-your-load", "blowjob", "blue-waffle", "blumpkin", "bollocks", "bondage", "boner", "boob", "boobs", "booty-call", "brown-showers", "brunette-action", "bukkake", "bulldyke", "bullet-vibe", "bullshit", "bung-hole", "bunghole", "busty", "butt", "buttcheeks", "butthole", "camel-toe", "camgirl", "camslut", "camwhore", "carpet-muncher", "carpetmuncher", "chocolate-rosebuds", "cialis", "circlejerk", "cleveland-steamer", "clit", "clitoris", "clover-clamps", "clusterfuck", "cock", "cocks", "coon", "coons", "coprolagnia", "coprophilia", "cornhole", "creampie", "cum", "cumming", "cumshot", "cumshots", "cunnilingus", "cunt", "darkie", "date-rape", "daterape", "deep-throat", "deepthroat", "dendrophilia", "dick", "dildo", "dingleberries", "dingleberry", "dirty-pillows", "dirty-sanchez", "dog-style", "doggie-style", "doggiestyle", "doggy-style", "doggystyle", "dolcett", "domination", "dominatrix", "dommes", "donkey-punch", "double-dong", "double-penetration", "dp-action", "dry-hump", "dvda", "eat-my-ass", "ecchi", "ejaculation", "erotic", "erotism", "escort", "eunuch", "fag", "faggot", "fecal", "felch", "fellatio", "feltch", "female-squirting", "femdom", "figging", "fingerbang", "fingering", "fisting", "foot-fetish", "footjob", "frotting", "fuck", "fuck-buttons", "fuckin", "fucking", "fucktards", "fudge-packer", "fudgepacker", "futanari", "gang-bang", "gangbang", "gay-sex", "genitals", "giant-cock", "girl-on", "girl-on-top", "girls-gone-wild", "goatcx", "goatse", "god-damn", "gokkun", "golden-shower", "goo-girl", "goodpoop", "goregasm", "grope", "group-sex", "guro", "hand-job", "handjob", "hard-core", "hardcore", "hentai", "homoerotic", "honkey", "hooker", "horny", "hot-carl", "hot-chick", "how-to-kill", "how-to-murder", "huge-fat", "humping", "incest", "intercourse", "jack-off", "jail-bait", "jailbait", "jelly-donut", "jerk-off", "jigaboo", "jiggaboo", "jiggerboo", "jizz", "juggs", "kike", "kinbaku", "kinkster", "kinky", "knobbing", "leather-restraint", "leather-straight-jacket", "lemon-party", "livesex", "lolita", "lovemaking", "make-me-come", "male-squirting", "masturbate", "masturbating", "masturbation", "menage-a-trois", "milf", "missionary-position", "mong", "motherfucker", "mound-of-venus", "mr-hands", "muff-diver", "muffdiving", "nambla", "nawashi", "negro", "neonazi", "nig-nog", "nigga", "nigger", "nimphomania", "nipple", "nipples", "nsfw", "nsfw-images", "nude", "nudity", "nutten", "nympho", "nymphomania", "octopussy", "omorashi", "one-cup-two-girls", "one-guy-one-jar", "orgasm", "orgy", "paedophile", "paki", "panties", "panty", "pedobear", "pedophile", "pegging", "penis", "phone-sex", "piece-of-shit", "pikey", "piss-pig", "pissing", "pisspig", "playboy", "pleasure-chest", "pole-smoker", "ponyplay", "poof", "poon", "poontang", "poop-chute", "poopchute", "porn", "porno", "pornography", "prince-albert-piercing", "pthc", "pubes", "punany", "pussy", "queaf", "queef", "quim", "raghead", "raging-boner", "rape", "raping", "rapist", "rectum", "reverse-cowgirl", "rimjob", "rimming", "rosy-palm", "rusty-trombone", "sadism", "santorum", "scat", "schlong", "scissoring", "semen", "sex", "sexcam", "sexo", "sexual", "sexuality", "sexually", "sexy", "shaved-beaver", "shaved-pussy", "shemale", "shibari", "shit", "shitblimp", "shitty", "shota", "shrimping", "skeet", "slanteye", "slut", "smut", "snatch", "snowballing", "sodomize", "sodomy", "spastic", "spic", "splooge", "splooge-moose", "spooge", "spread-legs", "spunk", "strap-on", "strapon", "strappado", "strip-club", "style-doggy", "suck", "sucks", "suicide-girls", "sultry-women", "swastika", "swinger", "tainted-love", "taste-my", "tea-bagging", "threesome", "throating", "thumbzilla", "tied-up", "tight-white", "tit", "tits", "titties", "titty", "tongue-in-a", "topless", "tosser", "towelhead", "tranny", "tribadism", "tub-girl", "tubgirl", "tushy", "twat", "twink", "twinkie", "two-girls-one-cup", "undressing", "upskirt", "urethra-play", "urophilia", "vagina", "venus-mound", "viagra", "vibrator", "violet-wand", "vorarephilia", "voyeur", "voyeurweb", "voyuer", "vulva", "wank", "wet-dream", "wetback", "white-power", "whore", "worldsex", "wrapping-men", "wrinkled-starfish", "xx", "xxx", "yaoi", "yellow-showers", "yiffy", "zoophilia"]);
 const GLYPH_BY_CHAR = new Map(GLYPHS.map(g => [g.c, g]));
 const EMOJI_BY_CHAR = new Map(EMOJI.map(x => [x.e, x]));
 
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+const ROUTES = {
+  "GET /codes": codes,
+  "POST /suggest": suggest,
+  "POST /claim": claim,
+  "GET /playlist": getPlaylist,
+  "POST /playlist/suggest": suggestPlaylist,
+  "POST /playlist/save": savePlaylist,
+  "GET /playlists/mine": myPlaylists,
+  "POST /auth/start": startSignIn,
+  "POST /auth/verify": verifySignIn,
+  "GET /auth/me": me,
+  "POST /auth/signout": signOut,
+};
+
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
-      });
-    }
-
+    if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
+    const handler = ROUTES[`${request.method} ${url.pathname}`];
+    if (!handler) return preview(url);
+    const body = request.method === "POST" ? await request.json().catch(() => null) : null;
+    const req = { url, body, request, env };
     try {
-      if (url.pathname === "/codes") return await codes(url, env);
-      if (url.pathname === "/suggest" && request.method === "POST") return await suggest(request, env);
-      if (url.pathname === "/claim" && request.method === "POST") return await claim(request, env);
+      return await handler(req);
     } catch (err) {
-      return json({ error: "Server error", details: String((err && err.message) || err) }, 500);
+      // A new database has no tables yet: make them, then try once more
+      if (env.DB && /no such table/i.test(String(err && err.message))) {
+        try {
+          await env.DB.batch(SCHEMA.map(s => env.DB.prepare(s)));
+          return await handler(req);
+        } catch (err2) {
+          return serverError(err2);
+        }
+      }
+      return serverError(err);
     }
-    return preview(url);
   },
 };
 
-// ---- Looking codes up ------------------------------------------------------------
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS song_codes (code TEXT PRIMARY KEY, script TEXT NOT NULL, track TEXT NOT NULL,
+     chars TEXT, word TEXT, why TEXT, created TEXT NOT NULL, UNIQUE (track, script))`,
+  `CREATE TABLE IF NOT EXISTS zh_shapes (shape TEXT PRIMARY KEY, code TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, items TEXT NOT NULL, hash TEXT NOT NULL, owner TEXT,
+     labels TEXT NOT NULL, why TEXT, created TEXT NOT NULL, updated TEXT NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS playlist_snapshots ON playlists (hash) WHERE owner IS NULL`,
+  `CREATE INDEX IF NOT EXISTS playlists_by_owner ON playlists (owner, updated)`,
+  `CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, created TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS sign_in_codes (email TEXT PRIMARY KEY, code TEXT NOT NULL, expires INTEGER NOT NULL,
+     tries INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, owner TEXT NOT NULL, expires INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS sends (key TEXT NOT NULL, at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS sends_by_key ON sends (key, at)`,
+];
 
-async function codes(url, env) {
-  if (!env.CODES) {
-    return json({ error: "Codes aren't set up on this Worker yet" }, 503);
-  }
+const notSetUp = () => json({ error: "Codes aren't set up on this Worker yet. It needs its DB binding." }, 503);
+const serverError = err => json({ error: "Server error", details: String((err && err.message) || err) }, 500);
+
+// ---- Song codes: looking up -----------------------------------------------------------
+
+async function codes({ url, env }) {
+  if (!env.DB) return notSetUp();
   const list = [...new Set((url.searchParams.get("c") || "").split(",").map(c => stripVS(c).trim()).filter(Boolean))];
   if (!list.length || list.length > 50) {
     return json({ error: "Pass 1 to 50 codes, separated by commas, as ?c=" }, 400);
   }
+  const keys = [...new Set(list.map(stripTones).filter(c => CODE_RE.test(c)))];
+  const rows = keys.length
+    ? (await env.DB.prepare(`SELECT code, track FROM song_codes WHERE code IN (${keys.map(() => "?").join(",")})`).bind(...keys).all()).results
+    : [];
+  const found = new Map(rows.map(r => [r.code, r.track]));
   const out = {};
-  await Promise.all(list.map(async asked => {
-    out[asked] = null;   // answered under the code as asked, skin tone and all
-    const code = stripTones(asked);
-    if (!CODE_RE.test(code)) return;
-    try {
-      out[asked] = await env.CODES.get(code, "json");
-    } catch (err) {
-      out[asked] = null;   // a value that isn't valid JSON counts as no song
-    }
-  }));
-  return json(out, 200, { "Cache-Control": "public, max-age=60" });
+  for (const asked of list) {   // answered under the code as asked, skin tone and all
+    const track = found.get(stripTones(asked));
+    out[asked] = track ? { type: "track", id: track } : null;
+  }
+  // A saved code never changes, so answers can be cached; "no song yet" can change any minute
+  const allFound = list.every(c => out[c]);
+  return json(out, 200, { "Cache-Control": allFound ? "public, max-age=300" : "no-store" });
 }
 
-// ---- Suggesting codes --------------------------------------------------------------
+// The codes a song already has: { zh?, eg?, em? }, each marked saved
+async function songCodes(db, track) {
+  const rows = (await db.prepare("SELECT code, script, chars, word, why FROM song_codes WHERE track = ?").bind(track).all()).results;
+  const out = {};
+  for (const r of rows) {
+    out[r.script] = r.script === "zh"
+      ? { code: r.code, chars: parseChars(r.chars, r.code), word: r.word || null, why: r.why || "", saved: true }
+      : { code: r.code, chars: [...r.code].map(r.script === "eg" ? glyphChar : emojiChar), why: r.why || "", saved: true };
+  }
+  return out;
+}
 
-async function suggest(request, env) {
-  if (!env.CODES) return json({ error: "Codes aren't set up on this Worker yet" }, 503);
-  const body = await request.json().catch(() => null);
-  const target = await parseTarget(body);
-  if (!target) return json({ error: "Send a song id or a playlist" }, 400);
+function parseChars(value, code) {
+  try {
+    const list = JSON.parse(value || "[]");
+    if (Array.isArray(list) && list.length === [...code].length) return list;
+  } catch (err) {}
+  return [...code].map(ch => ({ char: ch, meaning: "" }));
+}
+
+// ---- Song codes: suggesting -----------------------------------------------------------
+
+async function suggest({ body, env }) {
+  if (!env.DB) return notSetUp();
+  const track = body && body.type === "track" && ID_RE.test(body.id || "") ? body.id : null;
+  if (!track) return json({ error: "Send a song id" }, 400);
 
   // Codes the song already has stay; only kinds it doesn't have yet get suggestions
-  const saved = (await existingCodes(env, target)) || {};
+  const saved = await songCodes(env.DB, track);
   const missing = SCRIPTS.filter(s => !saved[s]);
   if (!missing.length) return json({ existing: true, ...saved });
 
   if (!env.AI) return json({ error: "Code suggestions aren't set up on this Worker yet" }, 503);
-  const songs = await songsFor(target, env);
+  const songs = await songsFor(track, env.DB);
   if (!songs.length) return json({ error: "Couldn't read this song from Spotify. Try again in a moment." }, 502);
 
   const words = await loadWords();
-  const prompt = buildPrompt(songs, target.type === "playlist");
-  const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji };
-  const built = Object.fromEntries(missing.map(s => [s, { cands: [], alts: [] }]));
-  for (let attempt = 0; attempt < 2 && missing.some(s => !built[s].cands.length); attempt++) {
-    const ai = await askAI(env, prompt);
-    for (const s of missing) if (!built[s].cands.length) built[s] = readers[s](ai);
-  }
+  const built = await askForCodes(env, songs, false, missing, words);
   if (missing.every(s => !built[s].cands.length)) {
     if (Object.keys(saved).length) return json({ existing: true, ...saved });
     return json({ error: "Couldn't come up with codes for this one. Try again." }, 502);
   }
-  const picks = await Promise.all(missing.map(s => pickFree(env, s, built[s], target, words)));
+  const picks = await Promise.all(missing.map(s => pickFree(env.DB, s, built[s], track, words)));
   const out = { ...saved };
   missing.forEach((s, i) => { if (picks[i]) out[s] = { ...picks[i], saved: false }; });
   return json({ existing: false, ...out, about: songs.map(songLabel) });
 }
 
+// The first suggestion nobody else has. If every one is taken, add a third character.
+async function pickFree(db, script, built, track, words) {
+  if (!built.cands.length) return null;
+  for (const c of built.cands) {
+    if (await isFree(db, script, c.code, track)) return withOptions(c, built, false);
+  }
+  const first = built.cands[0];
+  for (const extra of built.alts[1] || []) {
+    const code = first.code + extra.char;
+    if (problem(script, code) || !(await isFree(db, script, code, track))) continue;
+    const longer = { ...first, code, chars: [...first.chars, extra] };
+    if (script === "zh") longer.word = wordFor(code, words) || null;
+    return withOptions(longer, built, false);
+  }
+  return withOptions(first, built, true);   // all taken: the sharer swaps a character
+}
+
+// Dropdown choices for each position: the pick first, then alternatives, then other suggestions' characters
+function withOptions(pick, built, taken) {
+  const options = pick.chars.map((chosen, i) => {
+    const seen = new Set(), list = [];
+    for (const o of [chosen, ...(built.alts[i] || []), ...built.cands.map(c => c.chars[i]).filter(Boolean)]) {
+      if (!o || seen.has(o.char)) continue;
+      seen.add(o.char);
+      list.push(o);
+    }
+    return list.slice(0, 7);
+  });
+  return { ...pick, options, taken };
+}
+
+async function isFree(db, script, code, track) {
+  const row = await db.prepare("SELECT track FROM song_codes WHERE code = ?").bind(code).first();
+  if (row && row.track !== track) return false;
+  if (script === "zh" && hasShapeChar(code)) {
+    const shape = await db.prepare("SELECT code FROM zh_shapes WHERE shape = ?").bind(shapeOf(code)).first();
+    if (shape && shape.code !== code) return false;   // a look-alike of a code that exists
+  }
+  return true;
+}
+
+// ---- Song codes: saving ------------------------------------------------------------------
+
+async function claim({ body, env, request }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const track = body && body.type === "track" && ID_RE.test(body.id || "") ? body.id : null;
+  if (!track) return json({ error: "Send a song id" }, 400);
+  if (!(await allow(db, "claim:" + (await ipKey(request, env)), 30, HOUR))) {
+    return json({ error: "Too many codes saved from here. Try again in a while." }, 429);
+  }
+
+  let saved = await songCodes(db, track);
+  let codes = wantedCodes(body, saved);
+  if (!Object.keys(codes).length) {
+    if (Object.keys(saved).length) return json({ existing: true, ...saved });
+    return json({ error: "Send a Chinese, hieroglyph or emoji code" }, 400);
+  }
+  for (const [script, code] of Object.entries(codes)) {
+    const why = problem(script, code);
+    if (why) return json({ error: why, script, code }, 400);
+    if (!(await isFree(db, script, code, track))) return takenReply(script, code);
+  }
+  // Only real songs get codes, so nobody can sit on codes with made-up song IDs
+  if (!(await oembedTitle(track)) && !(await embedPage(track))) {
+    return json({ error: "Couldn't find this song on Spotify." }, 404);
+  }
+
+  const words = await loadWords();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const at = new Date().toISOString();
+    const out = {}, writes = [];
+    for (const [script, code] of Object.entries(codes)) {
+      const given = body[script] || {};
+      const why = text(given.why, 90);
+      if (script === "zh") {
+        const g = Array.isArray(given.chars) ? given.chars : [];
+        const chars = [...code].map((ch, i) => ({ char: ch, meaning: text(g[i] && g[i].char === ch ? g[i].meaning : "", 30) }));
+        const word = wordFor(code, words) || text(given.word, 40) || null;
+        out.zh = { code, chars, word, why, saved: true };
+        writes.push(db.prepare("INSERT INTO song_codes (code, script, track, chars, word, why, created) VALUES (?, 'zh', ?, ?, ?, ?, ?)")
+          .bind(code, track, JSON.stringify(chars), word, why, at));
+        if (hasShapeChar(code)) writes.push(db.prepare("INSERT INTO zh_shapes (shape, code) VALUES (?, ?)").bind(shapeOf(code), code));
+      } else {
+        out[script] = { code, chars: [...code].map(script === "eg" ? glyphChar : emojiChar), why, saved: true };
+        writes.push(db.prepare("INSERT INTO song_codes (code, script, track, chars, word, why, created) VALUES (?, ?, ?, NULL, NULL, ?, ?)")
+          .bind(code, script, track, why, at));
+      }
+    }
+    try {
+      // One transaction: every code is saved, or none is
+      await db.batch(writes);
+      return json({ existing: Object.keys(saved).length > 0, ...saved, ...out });
+    } catch (err) {
+      if (!isConflict(err)) throw err;
+    }
+    // Someone else saved first: a code went to another song, or this song gained codes
+    saved = await songCodes(db, track);
+    for (const [script, code] of Object.entries(codes)) {
+      if (!saved[script] && !(await isFree(db, script, code, track))) return takenReply(script, code, true);
+    }
+    codes = wantedCodes(body, saved);
+    if (!Object.keys(codes).length) break;
+  }
+  return json({ existing: true, ...saved });
+}
+
+function wantedCodes(body, saved) {
+  const codes = {};
+  for (const s of SCRIPTS) {
+    const raw = body[s] && typeof body[s].code === "string" ? canon(body[s].code).replace(/\s+/g, "") : "";
+    if (raw && !saved[s]) codes[s] = raw;   // kinds the song already has stay as they are
+  }
+  return codes;
+}
+
+function takenReply(script, code, justNow) {
+  const whose = script === "zh" ? "song or a look-alike code" : "song";
+  return json({ error: `${code} ${justNow ? "just went" : "already belongs"} to another ${whose}`, script, code, taken: true }, 409);
+}
+
+// ---- Asking the AI ---------------------------------------------------------------------------
+
 const SYSTEM = "You name songs with short, poetic codes for Spotiky, a music link app. You write in your own words, never quote song lyrics, and reply with JSON only.";
+
+// Suggestions for the given kinds: { zh: {cands, alts}, ... }. Asks a second time if the first answer is unusable.
+async function askForCodes(env, songs, isPlaylist, kinds, words) {
+  const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji, en: readEnglish };
+  const prompt = buildPrompt(songs, isPlaylist);
+  const built = Object.fromEntries(kinds.map(s => [s, { cands: [], alts: [] }]));
+  for (let attempt = 0; attempt < 2 && kinds.some(s => !built[s].cands.length); attempt++) {
+    const ai = await askAI(env, prompt, isPlaylist ? 1700 : 1400);
+    for (const s of kinds) if (!built[s].cands.length) built[s] = readers[s](ai);
+  }
+  return built;
+}
 
 function buildPrompt(songs, isPlaylist) {
   const subject = isPlaylist
@@ -709,6 +920,9 @@ function buildPrompt(songs, isPlaylist) {
     : `the song ${songLabel(songs[0])}`;
   const what = isPlaylist ? "playlist" : "song";
   const glyphLines = GLYPHS.map(g => `${g.c} ${g.name}: ${g.meaning}`).join("\n");
+  const english = isPlaylist
+    ? `\nEnglish: give 3 different labels. Each is one or two common English words in lowercase, joined by a hyphen when there are two (like "night-drive"), that capture the playlist.\n`
+    : "";
   return `Make Spotiky codes for ${subject}
 
 A code is two characters that capture what the ${what} is about: its story, mood or imagery, not just the words in its title. Describe themes in your own words and never quote lyrics.
@@ -720,8 +934,8 @@ ${glyphLines}
 
 Emoji: give 3 different codes. Each is 2 emoji, taken only from this list, that tell the ${what}'s story at a glance. Leave people and hands in their default color with no skin tone; the person sharing picks one.
 ${EMOJI.map(x => x.e).join("")}
-
-For all three kinds, also give 4 alternatives for each position of your first code: characters, signs or emoji that would also fit in that spot.
+${english}
+For every kind, also give 4 alternatives for each position of your first code: characters, signs, emoji${isPlaylist ? " or words" : ""} that would also fit in that spot.
 Write each "why" as one short English line, under 12 words, about the ${what}.
 
 Reply with JSON only, in exactly this shape:
@@ -730,15 +944,17 @@ Reply with JSON only, in exactly this shape:
 "eg":[{"code":"..","why":".."}],
 "eg_alts":[["..",".."],["..",".."]],
 "em":[{"code":"..","why":".."}],
-"em_alts":[["..",".."],["..",".."]]}
+"em_alts":[["..",".."],["..",".."]]${isPlaylist ? `,
+"en":[{"code":"..","why":".."}],
+"en_alts":[["..",".."],["..",".."]]` : ""}}
 /no_think`;
 }
 
-async function askAI(env, prompt) {
+async function askAI(env, prompt, maxTokens) {
   try {
     const res = await env.AI.run(MODEL, {
       messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
-      max_tokens: 1400,
+      max_tokens: maxTokens,
       temperature: 0.7,
     });
     const out = res && (res.response ?? res.choices?.[0]?.message?.content ?? res.choices?.[0]?.text);
@@ -820,116 +1036,29 @@ function emojiChar(ch) {
   return { char: ch, name: x ? x.name : "", meaning: x ? x.name : "", toneable: TONEABLE.has(ch) };
 }
 
-// The first suggestion nobody else has. If every one is taken, add a third character.
-async function pickFree(env, script, built, target, words) {
-  if (!built.cands.length) return null;
-  for (const c of built.cands) {
-    if (await isFree(env, script, c.code, target)) return withOptions(c, built, false);
+// English labels are words; each word is one swappable "character"
+function readEnglish(ai) {
+  const cands = [];
+  for (const c of Array.isArray(ai && ai.en) ? ai.en : []) {
+    const code = cleanEnglish(c && c.code);
+    if (enProblem(code) || cands.some(x => x.code === code)) continue;
+    cands.push({ code, chars: code.split("-").map(wordChar), why: text(c.why, 90) });
   }
-  const first = built.cands[0];
-  for (const extra of built.alts[1] || []) {
-    const code = first.code + extra.char;
-    if (problem(script, code) || !(await isFree(env, script, code, target))) continue;
-    const longer = { ...first, code, chars: [...first.chars, extra] };
-    if (script === "zh") longer.word = wordFor(code, words) || null;
-    return withOptions(longer, built, false);
-  }
-  return withOptions(first, built, true);   // all taken: the sharer swaps a character
-}
-
-// Dropdown choices for each position: the pick first, then alternatives, then other suggestions' characters
-function withOptions(pick, built, taken) {
-  const options = pick.chars.map((chosen, i) => {
-    const seen = new Set(), list = [];
-    for (const o of [chosen, ...(built.alts[i] || []), ...built.cands.map(c => c.chars[i]).filter(Boolean)]) {
-      if (!o || seen.has(o.char)) continue;
-      seen.add(o.char);
-      list.push(o);
-    }
-    return list.slice(0, 7);
+  const alts = [0, 1].map(i => {
+    const list = Array.isArray(ai && ai.en_alts) && Array.isArray(ai.en_alts[i]) ? ai.en_alts[i] : [];
+    return list.map(a => cleanEnglish(typeof a === "string" ? a : a && a.char))
+      .filter(w => /^[a-z]{2,12}$/.test(w) && !EN_BLOCK.has(w)).map(wordChar);
   });
-  return { ...pick, options, taken };
+  return { cands, alts };
 }
 
-// ---- Saving codes --------------------------------------------------------------------
+const cleanEnglish = v => (typeof v === "string" ? v.trim().toLowerCase().replace(/[\s_]+/g, "-") : "");
+const wordChar = w => ({ char: w, name: "", meaning: "" });
 
-async function claim(request, env) {
-  if (!env.CODES) return json({ error: "Codes aren't set up on this Worker yet" }, 503);
-  const body = await request.json().catch(() => null);
-  const target = await parseTarget(body);
-  if (!target) return json({ error: "Send a song id or a playlist" }, 400);
-
-  // Kinds of code the song already has stay as they are; only new kinds get saved
-  const rec = (await env.CODES.get(target.key, "json")) || {};
-  const saved = (await existingCodes(env, target)) || {};
-  const codes = {};
-  for (const s of SCRIPTS) {
-    const raw = body[s] && typeof body[s].code === "string" ? canon(body[s].code).replace(/\s+/g, "") : "";
-    if (raw && !rec[s]) codes[s] = raw;
-  }
-  if (!Object.keys(codes).length) {
-    if (Object.keys(saved).length) return json({ existing: true, ...saved });
-    return json({ error: "Send a Chinese, hieroglyph or emoji code" }, 400);
-  }
-  for (const [script, code] of Object.entries(codes)) {
-    const why = problem(script, code);
-    if (why) return json({ error: why, script, code }, 400);
-    if (!(await isFree(env, script, code, target))) {
-      return json({ error: `${code} already belongs to another ${script === "zh" ? "song or a look-alike code" : "song"}`, script, code, taken: true }, 409);
-    }
-  }
-
-  const at = new Date().toISOString();
-  const base = target.type === "track" ? { type: "track", id: target.id } : { type: "playlist", items: target.items };
-  const writes = [];
-  const out = {};
-  if (codes.zh) {
-    const zh = codes.zh;
-    const words = await loadWords();
-    const given = Array.isArray(body.zh.chars) ? body.zh.chars : [];
-    const chars = [...zh].map((ch, i) => ({ char: ch, meaning: text(given[i] && given[i].char === ch ? given[i].meaning : "", 30) }));
-    out.zh = { code: zh, chars, word: wordFor(zh, words) || text(body.zh.word, 40) || null, why: text(body.zh.why, 90), saved: true };
-    writes.push(env.CODES.put(zh, JSON.stringify({ ...base, script: "zh", chars, word: out.zh.word, why: out.zh.why, at })));
-    if (hasShapeChar(zh)) writes.push(env.CODES.put(shapeKey(zh), zh));
-  }
-  if (codes.eg) {
-    out.eg = { code: codes.eg, chars: [...codes.eg].map(glyphChar), why: text(body.eg.why, 90), saved: true };
-    writes.push(env.CODES.put(codes.eg, JSON.stringify({ ...base, script: "eg", why: out.eg.why, at })));
-  }
-  if (codes.em) {
-    out.em = { code: codes.em, chars: [...codes.em].map(emojiChar), why: text(body.em.why, 90), saved: true };
-    writes.push(env.CODES.put(codes.em, JSON.stringify({ ...base, script: "em", why: out.em.why, at })));
-  }
-  const merged = { at: rec.at || at };
-  for (const s of SCRIPTS) merged[s] = rec[s] || codes[s] || null;
-  writes.push(env.CODES.put(target.key, JSON.stringify(merged)));
-  await Promise.all(writes);
-  return json({ existing: Object.keys(saved).length > 0, ...saved, ...out });
-}
-
-// The codes a song or playlist already has: { zh?, eg?, em? }, each marked saved
-async function existingCodes(env, target) {
-  const rec = await env.CODES.get(target.key, "json");
-  if (!rec || !SCRIPTS.some(s => rec[s])) return null;
-  const recs = await Promise.all(SCRIPTS.map(s => (rec[s] ? env.CODES.get(rec[s], "json") : null)));
-  const out = {};
-  SCRIPTS.forEach((s, i) => {
-    const code = rec[s];
-    if (!code) return;
-    const r = recs[i] || {};
-    if (s === "zh") {
-      out.zh = { code, chars: Array.isArray(r.chars) ? r.chars : [...code].map(ch => ({ char: ch, meaning: "" })), word: r.word || null, why: r.why || "", saved: true };
-    } else {
-      out[s] = { code, chars: [...code].map(s === "eg" ? glyphChar : emojiChar), why: r.why || "", saved: true };
-    }
-  });
-  return out;
-}
-
-// ---- Rules for codes -------------------------------------------------------------------
+// ---- Rules for codes and labels --------------------------------------------------------
 
 function problem(script, code) {
-  return script === "zh" ? zhProblem(code) : script === "eg" ? egProblem(code) : emProblem(code);
+  return script === "zh" ? zhProblem(code) : script === "eg" ? egProblem(code) : script === "em" ? emProblem(code) : enProblem(code);
 }
 
 function emProblem(code) {
@@ -956,52 +1085,367 @@ function egProblem(code) {
   return null;
 }
 
+function enProblem(label) {
+  if (!EN_RE.test(label || "") || label.length > 20) return "An English label is one or two lowercase words, like night-drive";
+  if (EN_BLOCK.has(label) || label.split("-").some(w => EN_BLOCK.has(w))) return "That label uses a word Spotiky doesn't use";
+  return null;
+}
+
 const hasShapeChar = code => [...code].some(c => ZH_SHAPES[c]);
-const shapeKey = code => "shape:" + [...code].map(c => ZH_SHAPES[c] || c).join("");
+const shapeOf = code => [...code].map(c => ZH_SHAPES[c] || c).join("");
 
-async function isFree(env, script, code, target) {
-  const rec = await env.CODES.get(code, "json");
-  if (rec && !sameTarget(rec, target)) return false;
-  if (script === "zh" && hasShapeChar(code)) {
-    const owner = await env.CODES.get(shapeKey(code));
-    if (owner && owner !== code) return false;   // a look-alike of a code that exists
-  }
-  return true;
+// ---- Playlists ------------------------------------------------------------------------------
+
+// A playlist's songs written one standard way, or null: "ID1$83,夜光4-8,🌃💡83-105"
+function cleanItems(value) {
+  if (typeof value !== "string") return null;
+  const items = canon(value).trim();   // the same songs with other skin tones are the same playlist
+  const tokens = items.split(",");
+  if (!items || items.length > 4000 || tokens.length > 100 || !tokens.every(t => ITEM_RE.test(t))) return null;
+  return items;
 }
 
-function sameTarget(rec, target) {
-  return rec.type === target.type && (target.type === "track" ? rec.id === target.id : rec.items === target.items);
+async function getPlaylist({ url, request, env }) {
+  if (!env.DB) return notSetUp();
+  const id = String(url.searchParams.get("id") || "").toLowerCase();
+  if (!PLAYLIST_ID_RE.test(id)) return json({ error: "That isn't a playlist link" }, 400);
+  const row = await env.DB.prepare("SELECT * FROM playlists WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "No playlist has this link" }, 404);
+  return json(playlistReply(row, await signedIn(request, env), true));
 }
 
-async function parseTarget(body) {
-  if (!body || typeof body !== "object") return null;
-  if (body.type === "track" && ID_RE.test(body.id || "")) {
-    return { type: "track", id: body.id, key: "track:" + body.id };
+async function suggestPlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const items = cleanItems(body && body.items);
+  if (!items) return json({ error: "Send the playlist's songs" }, 400);
+  const hash = await fingerprint(items);
+  const owner = await signedIn(request, env);
+
+  // Already saved: your own copy when you're signed in, else the shared snapshot
+  if (owner) {
+    const own = await db.prepare("SELECT * FROM playlists WHERE owner = ? AND hash = ?").bind(owner, hash).first();
+    if (own) return json(playlistReply(own, owner));
   }
-  if (body.type === "playlist" && typeof body.items === "string") {
-    const items = canon(body.items).trim();   // the same songs with other skin tones are the same playlist
-    const tokens = items.split(",");
-    if (!items || items.length > 4000 || tokens.length > 100 || !tokens.every(t => ITEM_RE.test(t))) return null;
-    return { type: "playlist", items, key: "list:" + (await sha256(items)) };
+  const snap = await db.prepare("SELECT * FROM playlists WHERE owner IS NULL AND hash = ?").bind(hash).first();
+  if (snap && !owner) return json(playlistReply(snap, null));
+
+  let labels, why = "", about = [];
+  if (snap) {
+    labels = describeLabels(JSON.parse(snap.labels));   // a signed-in copy of a snapshot starts with its labels
+    why = snap.why || "";
+    for (const k of LABELS) if (labels[k]) labels[k].saved = false;
+  } else {
+    if (!env.AI) return json({ error: "Code suggestions aren't set up on this Worker yet" }, 503);
+    const songs = await songsFor(items, db);
+    if (!songs.length) return json({ error: "Couldn't read these songs from Spotify. Try again in a moment." }, 502);
+    about = songs.map(songLabel);
+    const built = await askForCodes(env, songs, true, LABELS, await loadWords());
+    labels = {};
+    for (const k of LABELS) if (built[k].cands.length) labels[k] = { ...withOptions(built[k].cands[0], built[k], false), saved: false };
+    if (!Object.keys(labels).length) return json({ error: "Couldn't come up with labels for this one. Try again." }, 502);
+    why = (LABELS.map(k => labels[k] && labels[k].why).find(Boolean)) || "";
+  }
+  // The ID the link will have. A signed-in person's comes with a signature, so saving can keep
+  // it without letting anyone pick their own (custom IDs are for paid links later).
+  const id = await freshId(db, owner ? randomIds() : snapshotIds(items, hash));
+  const reply = { id, labels, why, saved: false, mine: !!owner, owned: !!owner, about };
+  if (owner) reply.idSig = await keyed(env, `pid:${owner}:${id}`);
+  return json(reply);
+}
+
+async function savePlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const owner = await signedIn(request, env);
+  const items = cleanItems(body && body.items);
+  if (!items) return json({ error: "Send the playlist's songs" }, 400);
+  const hash = await fingerprint(items);
+  const at = new Date().toISOString();
+
+  // An owner changing their playlist: the songs (and labels, if sent) change, the link stays
+  if (body.edit) {
+    if (!owner) return json({ error: "Sign in to change your playlist" }, 401);
+    const row = await db.prepare("SELECT * FROM playlists WHERE id = ?").bind(String(body.edit).toLowerCase()).first();
+    if (!row) return json({ error: "No playlist has this link" }, 404);
+    if (row.owner !== owner) return json({ error: "Only its owner can change this playlist" }, 403);
+    const labels = body.labels ? cleanLabels(body.labels) : null;
+    if (labels && labels.error) return json(labels, 400);
+    await db.prepare("UPDATE playlists SET items = ?, hash = ?, labels = ?, why = ?, updated = ? WHERE id = ? AND owner = ?")
+      .bind(items, hash, labels ? JSON.stringify(labels.stored) : row.labels, labels ? labels.why || row.why : row.why, at, row.id, owner).run();
+    return json(playlistReply(await db.prepare("SELECT * FROM playlists WHERE id = ?").bind(row.id).first(), owner));
+  }
+
+  if (!(await allow(db, "save:" + (await ipKey(request, env)), 60, HOUR))) {
+    return json({ error: "Too many playlists saved from here. Try again in a while." }, 429);
+  }
+  const labels = cleanLabels(body.labels);
+  if (labels.error) return json(labels, 400);
+  const row = { items, hash, labels: JSON.stringify(labels.stored), why: labels.why, created: at, updated: at };
+
+  if (owner) {
+    const own = await db.prepare("SELECT * FROM playlists WHERE owner = ? AND hash = ?").bind(owner, hash).first();
+    if (own) return json(playlistReply(own, owner));
+    const shown = typeof body.id === "string" && typeof body.idSig === "string"
+      && sameText(body.idSig, await keyed(env, `pid:${owner}:${body.id}`)) ? [body.id] : [];
+    const id = await insertPlaylist(db, { ...row, owner }, withFirst(shown, randomIds()));
+    return json(playlistReply({ ...row, id, owner }, owner));
+  }
+  // A snapshot: first come, first served, like song codes
+  const snap = await db.prepare("SELECT * FROM playlists WHERE owner IS NULL AND hash = ?").bind(hash).first();
+  if (snap) return json(playlistReply(snap, null));
+  const id = await insertPlaylist(db, { ...row, owner: null }, snapshotIds(items, hash));
+  if (!id) {   // the same snapshot was saved a moment ago
+    const again = await db.prepare("SELECT * FROM playlists WHERE owner IS NULL AND hash = ?").bind(hash).first();
+    if (again) return json(playlistReply(again, null));
+    throw new Error("Couldn't save the playlist");
+  }
+  return json(playlistReply({ ...row, id, owner: null }, null));
+}
+
+async function myPlaylists({ request, env }) {
+  if (!env.DB) return notSetUp();
+  const owner = await signedIn(request, env);
+  if (!owner) return json({ error: "Sign in to see your playlists" }, 401);
+  const rows = (await env.DB.prepare("SELECT * FROM playlists WHERE owner = ? ORDER BY updated DESC LIMIT 100").bind(owner).all()).results;
+  return json({ playlists: rows.map(r => playlistReply(r, owner, true)) });
+}
+
+// Saves a playlist under the first free ID it's offered; returns the ID, or null when the
+// same snapshot was saved a moment ago
+async function insertPlaylist(db, row, ids) {
+  for await (const id of ids) {
+    try {
+      await db.prepare("INSERT INTO playlists (id, items, hash, owner, labels, why, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(id, row.items, row.hash, row.owner, row.labels, row.why || "", row.created, row.updated).run();
+      return id;
+    } catch (err) {
+      if (!isConflict(err)) throw err;
+      if (row.owner === null) {
+        const same = await db.prepare("SELECT id FROM playlists WHERE owner IS NULL AND hash = ?").bind(row.hash).first();
+        if (same) return null;
+      }
+      // that ID belongs to another playlist: try the next one
+    }
+  }
+  throw new Error("Couldn't find a free playlist ID");
+}
+
+// Snapshot IDs: the start of the playlist's fingerprint, one character longer each time it's
+// taken. A start that spells something rude moves on to the fingerprint of a variation.
+async function* snapshotIds(items, hash) {
+  let h = hash;
+  for (let variation = 1; variation <= 20; variation++) {
+    for (let len = 3; len <= 13; len++) {
+      const id = h.slice(0, len);
+      if (rude(id)) break;
+      yield id;
+    }
+    h = await fingerprint(items + "\n" + variation);
+  }
+}
+
+// Own playlists get random IDs: a few tries at each length before going one longer
+function* randomIds() {
+  for (let len = 3; len <= 13; len++) {
+    for (let n = 0; n < (len < 13 ? 6 : 30); n++) {
+      const id = randomId(len);
+      if (!rude(id)) yield id;
+    }
+  }
+}
+
+async function* withFirst(first, rest) {
+  yield* first;
+  yield* rest;
+}
+
+async function freshId(db, ids) {
+  for await (const id of ids) {
+    if (!(await db.prepare("SELECT 1 AS x FROM playlists WHERE id = ?").bind(id).first())) return id;
   }
   return null;
 }
 
+const rude = id => ID_BLOCK.some(w => id.includes(w));
+
+// Labels as sent by the page -> { stored, why } or { error, kind }
+function cleanLabels(given) {
+  if (!given || typeof given !== "object") return { error: "Send the playlist's labels" };
+  const stored = {};
+  let why = "";
+  for (const k of LABELS) {
+    const g = given[k];
+    if (!g || typeof g.code !== "string") continue;
+    const code = k === "en" ? cleanEnglish(g.code) : k === "em" ? canon(g.code).replace(/\s+/g, "") : g.code.replace(/\s+/g, "");
+    const p = problem(k, code);
+    if (p) return { error: p, kind: k };
+    if (k === "zh") {
+      const chars = Array.isArray(g.chars) ? g.chars : [];
+      stored.zh = { code, chars: [...code].map((ch, i) => ({ char: ch, meaning: text(chars[i] && chars[i].char === ch ? chars[i].meaning : "", 30) })) };
+    } else {
+      stored[k] = { code };
+    }
+    why = why || text(g.why, 90);
+  }
+  if (!Object.keys(stored).length) return { error: "Send at least one label" };
+  return { stored, why };
+}
+
+function describeLabels(stored) {
+  const out = {};
+  for (const k of LABELS) {
+    const s = stored && stored[k];
+    if (!s || typeof s.code !== "string") continue;
+    const chars = k === "zh" ? parseChars(JSON.stringify(s.chars || []), s.code)
+      : k === "eg" ? [...s.code].map(glyphChar)
+      : k === "em" ? [...s.code].map(emojiChar)
+      : s.code.split("-").map(wordChar);
+    out[k] = { code: s.code, chars, saved: true };
+  }
+  return out;
+}
+
+function playlistReply(row, owner, withItems) {
+  const reply = {
+    id: row.id,
+    labels: describeLabels(typeof row.labels === "string" ? JSON.parse(row.labels) : row.labels),
+    why: row.why || "",
+    saved: true,
+    mine: !!owner && row.owner === owner,
+    owned: !!row.owner,
+  };
+  if (withItems) reply.items = row.items;
+  return reply;
+}
+
+// ---- Accounts: email + a 6-digit code ----------------------------------------------------------
+
+async function startSignIn({ body, request, env }) {
+  if (!env.DB || !env.PEPPER || !env.RESEND_API_KEY) return json({ error: "Sign-in isn't set up on this Worker yet" }, 503);
+  const db = env.DB;
+  const email = cleanEmail(body && body.email);
+  if (!email) return json({ error: "Enter a valid email address" }, 400);
+  const who = await keyed(env, "email:" + email);
+  const ip = await ipKey(request, env);
+  // 3 codes per email per 15 minutes, 10 per connection per hour, 90 a day in all (Resend's free plan sends 100)
+  if (!(await allow(db, "code:" + who, 3, 15 * MINUTE)) || !(await allow(db, "code-ip:" + ip, 10, HOUR))) {
+    return json({ error: "Too many codes asked for. Wait a few minutes and try again." }, 429);
+  }
+  if (!(await allow(db, "code-all", 90, DAY))) {
+    return json({ error: "Sign-in emails are paused for today. Try again tomorrow." }, 429);
+  }
+  const code = sixDigits();
+  await db.prepare(`INSERT INTO sign_in_codes (email, code, expires, tries) VALUES (?, ?, ?, 0)
+                    ON CONFLICT (email) DO UPDATE SET code = excluded.code, expires = excluded.expires, tries = 0`)
+    .bind(who, await keyed(env, `code:${who}:${code}`), Date.now() + CODE_MINUTES * MINUTE).run();
+  if (!(await sendCode(env, email, code))) return json({ error: "Couldn't send the email. Try again in a moment." }, 502);
+  return json({ sent: true, minutes: CODE_MINUTES });
+}
+
+async function verifySignIn({ body, env }) {
+  if (!env.DB || !env.PEPPER) return json({ error: "Sign-in isn't set up on this Worker yet" }, 503);
+  const db = env.DB;
+  const email = cleanEmail(body && body.email);
+  const code = String((body && body.code) || "").replace(/\D/g, "");
+  if (!email || code.length !== 6) return json({ error: "Enter the 6-digit code from the email" }, 400);
+  const who = await keyed(env, "email:" + email);
+  const row = await db.prepare("SELECT code, expires, tries FROM sign_in_codes WHERE email = ?").bind(who).first();
+  if (!row || row.expires < Date.now()) return json({ error: "That code has expired. Ask for a new one.", expired: true }, 400);
+  if (row.tries >= CODE_TRIES) return json({ error: "Too many wrong tries. Ask for a new code.", expired: true }, 429);
+  const hashed = await keyed(env, `code:${who}:${code}`);
+  if (!sameText(row.code, hashed)) {
+    await db.prepare("UPDATE sign_in_codes SET tries = tries + 1 WHERE email = ?").bind(who).run();
+    return json({ error: "That code isn't right", triesLeft: Math.max(0, CODE_TRIES - row.tries - 1) }, 400);
+  }
+  // The code works once: whoever removes it first is the one signed in
+  const used = await db.prepare("DELETE FROM sign_in_codes WHERE email = ? AND code = ?").bind(who, hashed).run();
+  if (!used.meta || used.meta.changes !== 1) return json({ error: "That code was just used. Ask for a new one.", expired: true }, 400);
+  // The account is made the first time someone signs in with this email
+  await db.prepare("INSERT INTO owners (id, email, created) VALUES (?, ?, ?) ON CONFLICT (email) DO NOTHING")
+    .bind(randomId(16), who, new Date().toISOString()).run();
+  const owner = await db.prepare("SELECT id FROM owners WHERE email = ?").bind(who).first();
+  const token = randomToken();
+  const expires = Date.now() + SESSION_DAYS * DAY;
+  await db.prepare("INSERT INTO sessions (token, owner, expires) VALUES (?, ?, ?)").bind(await sha256hex(token), owner.id, expires).run();
+  return json({ token, expires });
+}
+
+async function me({ request, env }) {
+  if (!env.DB) return notSetUp();
+  const owner = await signedIn(request, env);
+  if (!owner) return json({ signedIn: false }, 401);
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM playlists WHERE owner = ?").bind(owner).first();
+  return json({ signedIn: true, playlists: row ? row.n : 0 });
+}
+
+async function signOut({ request, env }) {
+  if (!env.DB) return notSetUp();
+  const token = bearer(request);
+  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(await sha256hex(token)).run();
+  return json({ signedOut: true });
+}
+
+// The account behind this request's sign-in, or null
+async function signedIn(request, env) {
+  const token = bearer(request);
+  if (!token || !env.DB) return null;
+  const row = await env.DB.prepare("SELECT owner, expires FROM sessions WHERE token = ?").bind(await sha256hex(token)).first();
+  return row && row.expires > Date.now() ? row.owner : null;
+}
+
+function bearer(request) {
+  const m = (request.headers.get("Authorization") || "").match(/^Bearer\s+([A-Za-z0-9_-]{20,100})$/);
+  return m ? m[1] : null;
+}
+
+async function sendCode(env, email, code) {
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: env.EMAIL_FROM || FROM,
+        to: [email],
+        subject: `Your Spotiky code: ${code}`,
+        text: `Your Spotiky sign-in code is ${code}\n\nIt works for ${CODE_MINUTES} minutes. If you didn't ask for it, you can ignore this email.`,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+function cleanEmail(value) {
+  const e = String(value || "").trim().toLowerCase();
+  return e.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
+}
+
+// Rate limits: allows `limit` events per `windowMs` for a key, counting this one
+async function allow(db, key, limit, windowMs) {
+  const now = Date.now();
+  const row = await db.prepare("SELECT COUNT(*) AS n FROM sends WHERE key = ? AND at > ?").bind(key, now - windowMs).first();
+  if (row && row.n >= limit) return false;
+  await db.prepare("INSERT INTO sends (key, at) VALUES (?, ?)").bind(key, now).run();
+  if (Math.random() < 0.02) await db.prepare("DELETE FROM sends WHERE at < ?").bind(now - 2 * DAY).run();
+  return true;
+}
+
+// Where a request comes from, hashed so no IP address is ever stored
+const ipKey = (request, env) => keyed(env, "ip:" + (request.headers.get("CF-Connecting-IP") || "unknown"));
+
 // ---- Song details ------------------------------------------------------------------------
 
-async function songsFor(target, env) {
-  if (target.type === "track") {
-    const s = await songInfo(target.id);
-    return s ? [s] : [];
-  }
+// Up to 8 songs to describe: a song ID, or a playlist's songs (codes looked up)
+async function songsFor(itemsOrId, db) {
   const ids = [];
-  for (const token of target.items.split(",")) {
+  for (const token of String(itemsOrId).split(",")) {
     if (ids.length >= 8) break;
     const id = token.slice(0, 22);
     if (ID_RE.test(id)) { ids.push(id); continue; }
-    const code = canon(token.replace(/[\d-]+$/, ""));
-    const rec = await env.CODES.get(code, "json").catch(() => null);
-    if (rec && rec.type === "track" && ID_RE.test(rec.id)) ids.push(rec.id);
+    const row = await db.prepare("SELECT track FROM song_codes WHERE code = ?").bind(canon(token.replace(/[\d-]+$/, ""))).first();
+    if (row) ids.push(row.track);
   }
   return (await Promise.all(ids.map(songInfo))).filter(Boolean);
 }
@@ -1091,7 +1535,7 @@ function wordFor(code, words) {
   return (words && typeof words[code] === "string" && words[code]) || null;
 }
 
-// ---- Previews (unchanged) ----------------------------------------------------------------
+// ---- Previews ----------------------------------------------------------------------------
 
 async function preview(url) {
   const trackId = url.searchParams.get("id");
@@ -1133,9 +1577,65 @@ function text(value, max) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 
-async function sha256(s) {
+const isConflict = err => /UNIQUE|constraint/i.test(String(err && err.message));
+
+function base32(bytes) {
+  let out = "", n = 0, bits = 0;
+  for (const b of bytes) {
+    n = (n << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += ID_ALPHABET[(n >> bits) & 31];
+    }
+    n &= (1 << bits) - 1;
+  }
+  return bits ? out + ID_ALPHABET[(n << (5 - bits)) & 31] : out;
+}
+
+// A playlist's fingerprint: SHA-256 of its songs, written with the 32 ID characters
+async function fingerprint(s) {
+  return base32(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))));
+}
+
+async function sha256hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// HMAC with the PEPPER secret, so stored hashes are useless without it
+let hmacKey = null, hmacFor = null;
+async function keyed(env, s) {
+  if (!env.PEPPER) return sha256hex(s);   // only rate-limit keys get here; accounts require the pepper
+  if (hmacFor !== env.PEPPER) {
+    hmacKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.PEPPER), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    hmacFor = env.PEPPER;
+  }
+  const sig = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(s));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomId(len) {
+  return [...crypto.getRandomValues(new Uint8Array(len))].map(b => ID_ALPHABET[b & 31]).join("");
+}
+
+function sixDigits() {
+  const limit = 4294000000;   // the largest multiple of a million below 2^32, so every code is equally likely
+  let n;
+  do { n = crypto.getRandomValues(new Uint32Array(1))[0]; } while (n >= limit);
+  return String(n % 1000000).padStart(6, "0");
+}
+
+function sameText(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
 }
 
 function json(data, status = 200, extraHeaders = {}) {
