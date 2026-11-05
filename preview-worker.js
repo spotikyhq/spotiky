@@ -18,7 +18,9 @@
 // one hieroglyph code (2-3 signs from the Spotiky set of 98) and one emoji code (2-3
 // emoji that look the same on Windows, Mac, iPhone and Android). Codes saved for a
 // song are its codes for good, so the same song always gets the same codes; a song
-// missing a kind of code can still gain one. KV keys:
+// missing a kind of code can still gain one. Skin tones aren't part of a code: 👋🏾🌙,
+// 👋🏿🌙 and 👋🌙 are one code, saved without a tone, and the person sharing picks the
+// tone for their own link. KV keys:
 //   <code>           {type: "track", id} or {type: "playlist", items}, plus meanings
 //   track:<id>       {zh, eg, em} for a song
 //   list:<hash>      {zh, eg, em} for a playlist
@@ -32,6 +34,8 @@ const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Present
 const ID_RE = /^[a-zA-Z0-9]{22}$/;
 const ITEM_RE = /^(?:[a-zA-Z0-9]{22}(?:\$\d+(?:-\d+)?)?|[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}(?:\d+(?:-\d+)?)?)$/u;
 const stripVS = s => String(s || "").replace(/[︎️]/g, "");   // ❤️ and ❤ are one code
+const stripTones = s => String(s || "").replace(/[\u{1F3FB}-\u{1F3FF}]/gu, "");   // so are 👋🏾 and 👋
+const canon = s => stripTones(stripVS(s));
 
 // ---- Character data (generated from the Spotiky glyph review, China's 2013 character
 // table and Unicode's emoji list: single emoji from Emoji 11.0 or earlier, no flags) ----
@@ -609,6 +613,7 @@ const EMOJI = [
   {"e": "🧿", "name": "nazar amulet"},
   {"e": "🗿", "name": "moai"},
 ];
+const TONEABLE = new Set("👋🖖👌🤞🤘🤙👍👎✊👏🙌🙏💅🤳💪👂👶👼🎅🦸🧙🧚🧛🧜🚶🏃💃🕺🧗🏂🏄🏊🤸🤹🧘🛀🛌");   // emoji whose five skin tones show everywhere (Emoji 11.0 or earlier)
 const GLYPH_BY_CHAR = new Map(GLYPHS.map(g => [g.c, g]));
 const EMOJI_BY_CHAR = new Map(EMOJI.map(x => [x.e, x]));
 
@@ -647,13 +652,14 @@ async function codes(url, env) {
     return json({ error: "Pass 1 to 50 codes, separated by commas, as ?c=" }, 400);
   }
   const out = {};
-  await Promise.all(list.map(async code => {
-    out[code] = null;
+  await Promise.all(list.map(async asked => {
+    out[asked] = null;   // answered under the code as asked, skin tone and all
+    const code = stripTones(asked);
     if (!CODE_RE.test(code)) return;
     try {
-      out[code] = await env.CODES.get(code, "json");
+      out[asked] = await env.CODES.get(code, "json");
     } catch (err) {
-      out[code] = null;   // a value that isn't valid JSON counts as no song
+      out[asked] = null;   // a value that isn't valid JSON counts as no song
     }
   }));
   return json(out, 200, { "Cache-Control": "public, max-age=60" });
@@ -711,7 +717,7 @@ Chinese: give 3 different codes. Each is 2 common Simplified Chinese characters 
 Hieroglyphs: give 3 different codes. Each is 2 signs taken only from this list (sign, name: meaning):
 ${glyphLines}
 
-Emoji: give 3 different codes. Each is 2 emoji, taken only from this list, that tell the ${what}'s story at a glance:
+Emoji: give 3 different codes. Each is 2 emoji, taken only from this list, that tell the ${what}'s story at a glance. Leave people and hands in their default color with no skin tone; the person sharing picks one.
 ${EMOJI.map(x => x.e).join("")}
 
 For all three kinds, also give 4 alternatives for each position of your first code: characters, signs or emoji that would also fit in that spot.
@@ -796,20 +802,21 @@ function glyphChar(ch) {
 function readEmoji(ai) {
   const cands = [];
   for (const c of Array.isArray(ai && ai.em) ? ai.em : []) {
-    const code = typeof (c && c.code) === "string" ? stripVS(c.code).replace(/\s+/g, "") : "";
+    const code = typeof (c && c.code) === "string" ? canon(c.code).replace(/\s+/g, "") : "";
     if (emProblem(code) || cands.some(x => x.code === code)) continue;
     cands.push({ code, chars: [...code].map(emojiChar), why: text(c.why, 90) });
   }
   const alts = [0, 1].map(i => {
     const list = Array.isArray(ai && ai.em_alts) && Array.isArray(ai.em_alts[i]) ? ai.em_alts[i] : [];
-    return list.map(a => stripVS(typeof a === "string" ? a : (a && a.char) || "")).filter(a => EMOJI_BY_CHAR.has(a)).map(emojiChar);
+    return list.map(a => canon(typeof a === "string" ? a : (a && a.char) || "")).filter(a => EMOJI_BY_CHAR.has(a)).map(emojiChar);
   });
   return { cands, alts };
 }
 
+// toneable: the page offers skin tones for it
 function emojiChar(ch) {
   const x = EMOJI_BY_CHAR.get(ch);
-  return { char: ch, name: x ? x.name : "", meaning: x ? x.name : "" };
+  return { char: ch, name: x ? x.name : "", meaning: x ? x.name : "", toneable: TONEABLE.has(ch) };
 }
 
 // The first suggestion nobody else has. If every one is taken, add a third character.
@@ -856,7 +863,7 @@ async function claim(request, env) {
   const saved = (await existingCodes(env, target)) || {};
   const codes = {};
   for (const s of SCRIPTS) {
-    const raw = body[s] && typeof body[s].code === "string" ? stripVS(body[s].code).replace(/\s+/g, "") : "";
+    const raw = body[s] && typeof body[s].code === "string" ? canon(body[s].code).replace(/\s+/g, "") : "";
     if (raw && !rec[s]) codes[s] = raw;
   }
   if (!Object.keys(codes).length) {
@@ -971,7 +978,7 @@ async function parseTarget(body) {
     return { type: "track", id: body.id, key: "track:" + body.id };
   }
   if (body.type === "playlist" && typeof body.items === "string") {
-    const items = stripVS(body.items).trim();
+    const items = canon(body.items).trim();   // the same songs with other skin tones are the same playlist
     const tokens = items.split(",");
     if (!items || items.length > 4000 || tokens.length > 100 || !tokens.every(t => ITEM_RE.test(t))) return null;
     return { type: "playlist", items, key: "list:" + (await sha256(items)) };
@@ -991,7 +998,7 @@ async function songsFor(target, env) {
     if (ids.length >= 8) break;
     const id = token.slice(0, 22);
     if (ID_RE.test(id)) { ids.push(id); continue; }
-    const code = token.replace(/[\d-]+$/, "");
+    const code = canon(token.replace(/[\d-]+$/, ""));
     const rec = await env.CODES.get(code, "json").catch(() => null);
     if (rec && rec.type === "track" && ID_RE.test(rec.id)) ids.push(rec.id);
   }

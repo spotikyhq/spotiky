@@ -122,6 +122,11 @@
     .char .mean { font-size: 0.7rem; color: #b3b3b3; max-width: 76px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
     .char select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
     .code-word { font-size: 0.75rem; color: #b3b3b3; margin: 4px 0 0; }
+    .tones { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+    .tones .tone { width: 32px; height: 32px; padding: 0; margin: 0; border-radius: 8px; background: #2c2c2c; font-size: 18px; font-weight: 400; line-height: 1;
+                   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+    .tones .tone:hover { background: #3e3e3e; }
+    .tones .tone[aria-pressed="true"] { background: #353535; box-shadow: inset 0 0 0 2px #1DB954; }
     .code-why { font-size: 0.8rem; color: #ddd; margin: 6px 0 0; font-style: italic; }
     .code-note { font-size: 0.75rem; color: #f15e6c; margin: 6px 0 0; overflow-wrap: anywhere; }
     .code-note:empty { display: none; }
@@ -289,11 +294,17 @@
     }
 
     // ---- Spotiky codes ------------------------------------------------------------
-    // A code is a few Chinese characters or hieroglyphs that stand for a song. Times
+    // A code is a few Chinese characters, hieroglyphs or emoji that stand for a song. Times
     // can follow a code directly, because code characters and digits can't run together:
     //   /夜光83-105   /track/夜光1:23-1:45   /夜光.4-.8   /夜光$1.23   /𓇰𓇶3.23-3.24
+    // A skin tone isn't part of a code: /👋🏾🌙83 and /👋🌙83 are the same song, and the
+    // person sharing picks the tone for their link.
     const CODE_CHARS = String.raw`\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}`;
     const stripVS = s => String(s).replace(/[︎️]/g, '');   // ❤️ and ❤ are one code
+    const TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
+    const TONE_NAMES = ['Default', 'Light', 'Medium-light', 'Medium', 'Medium-dark', 'Dark'];
+    const stripTones = s => String(s).replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
+    const toneIn = s => (String(s).match(/[\u{1F3FB}-\u{1F3FF}]/u) || [''])[0];
     const CODE_RANGE_RE = new RegExp(String.raw`^(?:\$|[?&]t=|\.)?` + RANGE, 'i');
     const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
     const CODE_IN_TEXT_RE = new RegExp(String.raw`(?:^|\/)(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
@@ -329,6 +340,7 @@
     const codeCache = new Map();
     let codeBatch = null;
     function lookupCode(code) {
+      code = stripTones(stripVS(code));   // codes are kept without skin tones
       if (!codeCache.has(code)) {
         codeCache.set(code, new Promise((resolve, reject) => {
           if (!codeBatch) {
@@ -1104,12 +1116,13 @@
     }
 
     // ---- Share as a code ------------------------------------------------------------
-    // The Worker suggests a Chinese code and a hieroglyph code from what the song or
-    // playlist is about. Tap a character to swap it. Copying a link saves both codes,
-    // first come, first served; after that they belong to this song for good.
+    // The Worker suggests a Chinese, a hieroglyph and an emoji code from what the song or
+    // playlist is about. Tap a character to swap it. Copying a link saves the codes,
+    // first come, first served; after that they belong to this song for good. People and
+    // hands in an emoji code can take any skin tone; the tone is only in the link.
     const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji' };
     const SCRIPTS = ['zh', 'eg', 'em'];
-    let share = null;   // { target, suffix, linkFor, existing, zh, eg, busy }
+    let share = null;   // { target, suffix, linkFor, zh, eg, em, tone, busy }
 
     function h(tag, cls, text) {
       const n = document.createElement(tag);
@@ -1153,7 +1166,7 @@
         setStatus('Enter a track first');
         return;
       }
-      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`);
+      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`, toneIn(coded ? coded.code : ''));
     }
 
     async function sharePlaylist() {
@@ -1166,13 +1179,14 @@
         setStatus('Add at least one song first');
         return;
       }
-      const list = playlistPath(items).replace(/^\/playlist\//, '');
-      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`);
+      const list = stripTones(playlistPath(items).replace(/^\/playlist\//, ''));   // other skin tones, same playlist
+      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`, toneIn(decodeSafe(location.pathname)));
     }
 
-    async function openShare(target, suffix, linkFor) {
+    // tone: the skin tone in the link being shared, if it has one
+    async function openShare(target, suffix, linkFor, tone = '') {
       const panel = document.getElementById('sharePanel');
-      share = { target, suffix, linkFor, zh: null, eg: null, em: null, busy: false };
+      share = { target, suffix, linkFor, zh: null, eg: null, em: null, tone: tone || savedTone(), busy: false };
       const mine = share;
       panel.hidden = false;
       panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
@@ -1212,11 +1226,14 @@
       const what = share.target.type === 'track' ? 'song' : 'playlist';
       const cards = h('div', 'share-codes');
       for (const script of SCRIPTS) if (share[script]) cards.append(codeCard(script));
-      const note = SCRIPTS.every(s => !share[s] || share[s].saved)
+      let note = SCRIPTS.every(s => !share[s] || share[s].saved)
         ? `These are this ${what}'s codes. They stay the same for everyone.`
         : `Tap a character to swap it. Copying a link saves the new codes for this ${what}, first come, first served.`;
+      if (hasTones()) note += ` Any skin tone opens the same ${what}.`;
       document.getElementById('sharePanel').replaceChildren(shareHead(), cards, h('p', 'share-note', note));
     }
+
+    const hasTones = () => !!(share.em && share.em.chars.some(ch => ch.toneable));
 
     function codeCard(script) {
       const c = share[script];
@@ -1226,10 +1243,11 @@
       const chars = h('div', 'code-chars ' + script);
       c.chars.forEach((ch, i) => chars.append(charPicker(script, i)));
       card.append(chars);
+      if (script === 'em' && hasTones()) card.append(tonePicker());
       if (script === 'zh' && c.word) card.append(h('p', 'code-word', `Also a word: ${c.word}`));
       if (c.why) card.append(h('p', 'code-why', c.why));
       card.append(h('p', 'code-note', c.taken ? 'Taken by another song. Swap a character.' : ''));
-      const btn = h('button', 'secondary copy-code', `Copy ${c.code} link`);
+      const btn = h('button', 'secondary copy-code', `Copy ${linkCode(script)} link`);
       btn.type = 'button';
       btn.disabled = !!c.taken;
       btn.addEventListener('click', () => copyCode(script));
@@ -1241,20 +1259,29 @@
       return script === 'zh' ? (ch.meaning || '') : (ch.name || ch.meaning || '');
     }
 
+    // An emoji as it shows in this link: with the chosen skin tone when it can take one
+    const shown = (script, ch) => (script === 'em' && ch.toneable ? ch.char + share.tone : ch.char);
+
+    // The code as it goes in the link (the saved code never has a tone)
+    function linkCode(script) {
+      const c = share[script];
+      return script === 'em' && share.tone ? c.chars.map(ch => shown(script, ch)).join('') : c.code;
+    }
+
     function charPicker(script, i) {
       const c = share[script], ch = c.chars[i];
       const wrap = h('label', 'char');
-      const big = h('span', 'big', ch.char);
+      const big = h('span', 'big', shown(script, ch));
       big.setAttribute('aria-hidden', 'true');
       wrap.append(big, h('span', 'mean', charLabel(script, ch)));
       const options = (c.options && c.options[i]) || [];
       if (!c.saved && options.length > 1) {
         const sel = document.createElement('select');
         const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji' }[script];
-        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${ch.char} ${charLabel(script, ch)}. Change it`);
+        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${shown(script, ch)} ${charLabel(script, ch)}. Change it`);
         for (const o of options) {
           const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : script === 'em' ? o.name : o.meaning;
-          const opt = h('option', null, meaning ? `${o.char}  ${meaning}` : o.char);
+          const opt = h('option', null, meaning ? `${shown(script, o)}  ${meaning}` : shown(script, o));
           opt.value = o.char;
           opt.selected = o.char === ch.char;
           sel.append(opt);
@@ -1264,6 +1291,47 @@
         wrap.classList.add('pickable');
       }
       return wrap;
+    }
+
+    // Six swatches showing the code's first person or hand in each skin tone. Only this
+    // link changes: every tone opens the same song, so a tone can't make a new code.
+    function tonePicker() {
+      const face = share.em.chars.find(ch => ch.toneable).char;
+      const row = h('div', 'tones');
+      row.setAttribute('role', 'group');
+      row.setAttribute('aria-label', 'Skin tone');
+      TONES.forEach((t, i) => {
+        const b = h('button', 'tone', face + t);
+        b.type = 'button';
+        b.title = `${TONE_NAMES[i]} skin tone`;
+        b.setAttribute('aria-label', b.title);
+        b.setAttribute('aria-pressed', String(share.tone === t));
+        b.addEventListener('click', () => pickTone(i));
+        row.append(b);
+      });
+      return row;
+    }
+
+    function pickTone(i) {
+      share.tone = TONES[i];
+      rememberTone(share.tone);
+      renderShare();
+      const again = document.querySelectorAll('#sharePanel .tone')[i];
+      if (again) again.focus();
+    }
+
+    // The last tone picked on this device, like an emoji keyboard remembers it
+    const TONE_KEY = 'spotiky-skin-tone';
+    function savedTone() {
+      try {
+        const t = localStorage.getItem(TONE_KEY);
+        return TONES.includes(t) ? t : '';
+      } catch (e) {
+        return '';
+      }
+    }
+    function rememberTone(t) {
+      try { localStorage.setItem(TONE_KEY, t); } catch (e) {}
     }
 
     async function swapChar(script, i, value) {
@@ -1321,7 +1389,7 @@
     }
 
     function shareLink(script) {
-      return share.linkFor(share[script].code) + share.suffix;
+      return share.linkFor(linkCode(script)) + share.suffix;
     }
 
     async function claimShare(script) {
