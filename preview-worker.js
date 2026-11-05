@@ -12,7 +12,8 @@
 //
 // Previews: Spotify's Web API now returns preview_url: null, so this loads the
 // public embed page (open.spotify.com/embed/track/ID) and pulls the preview MP3
-// link out of its HTML.
+// link out of its HTML. Song titles come from Spotify's oEmbed API, artists from
+// the embed page.
 //
 // Codes: a song or playlist gets one Chinese code (2-3 common Simplified characters),
 // one hieroglyph code (2-3 signs from the Spotiky set of 98) and one emoji code (2-3
@@ -1005,33 +1006,74 @@ async function songsFor(target, env) {
   return (await Promise.all(ids.map(songInfo))).filter(Boolean);
 }
 
+// A song's title and artists. The title comes from Spotify's oEmbed API (the embed page
+// stopped carrying a <title>); the artists come from the embed page.
 async function songInfo(id) {
+  const [oembed, html] = await Promise.all([oembedTitle(id), embedPage(id)]);
+  const title = oembed || (html && titleIn(html));
+  return title ? { title, artist: (html && artistsIn(html)) || null } : null;
+}
+
+async function oembedTitle(id) {
   try {
-    const res = await fetch(`https://open.spotify.com/embed/track/${id}`, { headers: { "User-Agent": UA } });
+    const page = encodeURIComponent(`https://open.spotify.com/track/${id}`);
+    const res = await fetch(`https://open.spotify.com/oembed?url=${page}`, { headers: { "User-Agent": UA } });
     if (!res.ok) return null;
-    const html = await res.text();
-    let title = null, artist = null;
-    const t = html.match(/<title>([^<]+)<\/title>/);
-    if (t) {
-      title = entities(t[1]).replace(/\s*\|\s*Spotify\s*$/i, "").trim();
-      const by = title.match(/^(.*?)\s+-\s+song(?: and lyrics)? by\s+(.+)$/i);
-      if (by) { title = by[1].trim(); artist = by[2].trim(); }
-    }
-    if (!artist) {
-      const a = html.match(/"artists":\s*\[\s*\{[^}]*?"name":\s*"([^"]+)"/)
-        || html.match(/href="https:\/\/open\.spotify\.com\/artist\/[^"]+"[^>]*>([^<]+)</);
-      if (a) artist = entities(a[1]).trim();
-    }
-    return title ? { title, artist } : null;
+    const data = await res.json();
+    return typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
   } catch (err) {
     return null;
   }
 }
 
+// The public embed page: it carries the preview MP3 and the artists
+async function embedPage(id) {
+  try {
+    const res = await fetch(`https://open.spotify.com/embed/track/${id}`, { headers: { "User-Agent": UA } });
+    return res.ok ? await res.text() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// The title on an embed page, for when oEmbed doesn't answer
+function titleIn(html) {
+  for (const m of [
+    html.match(/<title[^>]*>([^<]+)<\/title>/),
+    html.match(/<h1\b[^>]*>(?:\s*<[^>]+>)*\s*([^<]+)</),
+    html.match(/<img\b[^>]*\balt="([^"]+?) cover"/),
+  ]) {
+    if (!m) continue;
+    const t = entities(m[1]).replace(/\s*\|\s*Spotify\s*$/i, "").replace(/\s+-\s+song(?: and lyrics)? by\s+.+$/i, "").trim();
+    if (t && !/^spotify(?: embed)?$/i.test(t)) return t;
+  }
+  return null;
+}
+
+// Up to three artist names from an embed page: its data's "artists" list, else its artist links
+function artistsIn(html) {
+  const names = [];
+  const add = n => { n = (n || "").trim(); if (n && !names.includes(n) && names.length < 3) names.push(n); };
+  const list = html.match(/"artists":\s*\[([^\]]*)\]/);
+  if (list) for (const m of list[1].matchAll(/"name":\s*"((?:[^"\\]|\\.)*)"/g)) add(unjson(m[1]));
+  if (!names.length) {
+    for (const m of html.matchAll(/<a\b[^>]*\bhref="[^"]*\/artist\/[A-Za-z0-9]{22}[^"]*"[^>]*>(?:\s*<[^>]+>)*\s*([^<]+)</g)) add(entities(m[1]));
+  }
+  if (!names.length) {
+    const t = html.match(/<title[^>]*>[^<]*?\s-\s+song(?: and lyrics)? by\s+([^<|]+)/i);
+    if (t) add(entities(t[1]));
+  }
+  return names.length ? names.join(", ") : null;
+}
+
 const songLabel = s => `"${s.title}"` + (s.artist ? ` by ${s.artist}` : "");
 
+const unjson = s => { try { return JSON.parse(`"${s}"`); } catch (err) { return s; } };
+
 function entities(s) {
-  return s.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+  const cp = n => (n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : "");
+  return s.replace(/&#x([0-9a-f]+);/gi, (_, h) => cp(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => cp(Number(d)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
 // Common two-character words, so a code that is also a real word says what that word means
@@ -1059,36 +1101,25 @@ async function preview(url) {
   }
 
   try {
-    const embedRes = await fetch(`https://open.spotify.com/embed/track/${trackId}`, {
-      headers: {
-        "User-Agent": UA,
-      },
-    });
-
-    if (!embedRes.ok) {
+    const [title, html] = await Promise.all([oembedTitle(trackId), embedPage(trackId)]);
+    if (html == null && !title) {
       return json({ error: "Could not load embed page" }, 502);
     }
 
-    const html = await embedRes.text();
     let previewUrl = null;
+    if (html) {
+      const match1 = html.match(/https:\/\/p\.scdn\.co\/mp3-preview\/[a-zA-Z0-9]+/);
+      if (match1) previewUrl = match1[0];
 
-    const match1 = html.match(/https:\/\/p\.scdn\.co\/mp3-preview\/[a-zA-Z0-9]+/);
-    if (match1) previewUrl = match1[0];
-
-    if (!previewUrl) {
-      const nextDataMatch = html.match(/"audioPreview":\s*{\s*"url":\s*"([^"]+)"/);
-      if (nextDataMatch) previewUrl = nextDataMatch[1];
-    }
-
-    let name = null;
-    const nameMatch = html.match(/<title>([^<]+)<\/title>/);
-    if (nameMatch) {
-      name = nameMatch[1].replace(" | Spotify", "").trim();
+      if (!previewUrl) {
+        const nextDataMatch = html.match(/"audioPreview":\s*{\s*"url":\s*"([^"]+)"/);
+        if (nextDataMatch) previewUrl = nextDataMatch[1];
+      }
     }
 
     return json({
       preview_url: previewUrl,
-      name: name,
+      name: title || (html && titleIn(html)) || null,
       source: previewUrl ? "embed" : null,
     });
   } catch (err) {

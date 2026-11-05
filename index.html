@@ -147,7 +147,7 @@
 
   <section id="trackView">
     <label for="link">Spotify track link or ID</label>
-    <input id="link" placeholder="Spotify link, track ID or Spotiky code" autocomplete="off">
+    <input id="link" placeholder="Spotify or Spotiky link, or a Spotiky code" autocomplete="off">
 
     <label for="time">Start time</label>
     <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
@@ -292,6 +292,24 @@
       const idMatch = s.match(/\/track\/([a-zA-Z0-9]{22})/i);
       if (!idMatch) return null;
       return { id: idMatch[1], ...parseRange(s.slice(idMatch.index + idMatch[0].length)) };
+    }
+
+    // A song and its times in anything pasted: a Spotify or Spotiky link, an older
+    // ?track=ID&t=83 link, or a bare ID:  spotiky.com/track/ID$1:23-1:45  ->  {id, time, end}
+    function parseTrackText(text) {
+      const s = decodeSafe(String(text).trim());
+      const m = s.match(/track[/:=]([a-zA-Z0-9]{22})/i) || s.match(/^([a-zA-Z0-9]{22})(?![a-zA-Z0-9])/);
+      return m ? { id: m[1], ...parseRange(s.slice(m.index + m[0].length)) } : null;
+    }
+
+    // The songs part of a Spotiky playlist link (spotiky.com/playlist/ID1$83,夜光), or null.
+    // Spotify's own playlists, and their f→k twins, are left out: those come in a later version.
+    function spotikyList(text) {
+      const s = decodeSafe(String(text).trim());
+      const m = s.match(/(?:^|\/)playlist\/([^\s?#]+)/i);
+      if (!m || /spotify/i.test(s)) return null;
+      const list = m[1].replace(/\/+$/, '');
+      return /^[a-zA-Z0-9]{22}$/.test(list) ? null : list;
     }
 
     // ---- Spotiky codes ------------------------------------------------------------
@@ -630,25 +648,45 @@
       });
     }
 
-    // The Play button: a Spotify link or ID, or a Spotiky code (times can be typed right after a code)
-    async function playFromInputs() {
+    // What the link box asks for: { code, start, end }, { id, start, end }, { list } for a
+    // Spotiky playlist link, or null. The link's own start and end count unless the time
+    // boxes say otherwise, so a copied spotiky.com/track/ID$1:23-1:45 keeps its clip.
+    function readTrackBox() {
       const raw = document.getElementById('link').value;
+      const list = spotikyList(raw);
+      if (list) return { list };
+      const found = parseCodeText(raw) || parseTrackText(raw);
+      if (!found) return null;
       const timeBox = document.getElementById('time').value.trim();
       const endBox = document.getElementById('endTime').value.trim();
-      const coded = parseCodeText(raw);
-      if (coded) {
-        const start = parseTime(timeBox || coded.time || '0');
-        const end = cleanEnd(start, endBox || coded.end);
-        const id = await resolveTrackCode(coded.code);
-        if (id) play(id, start, end, coded.code);
+      const start = parseTime(timeBox || found.time || '0');
+      return { code: found.code || null, id: found.id || null, start, end: cleanEnd(start, endBox || found.end) };
+    }
+
+    // Says what's wrong with the link box, or opens a pasted Spotiky playlist on its own page
+    function trackBoxProblem(want, forShare) {
+      if (want && want.list) {
+        location.assign('/playlist/' + want.list + (forShare ? '#share' : ''));
+        return true;
+      }
+      if (want) return false;
+      const raw = document.getElementById('link').value.trim();
+      setStatus(!raw ? 'Enter a song first'
+        : /playlist[/:]/i.test(raw) ? "That's a Spotify playlist link. Those are coming in a later version, so paste its songs on the playlist page for now."
+        : 'Please enter a Spotify or Spotiky song link, track ID or Spotiky code');
+      return true;
+    }
+
+    // The Play button: a Spotify or Spotiky link, an ID, or a Spotiky code (times can follow a code)
+    async function playFromInputs() {
+      const want = readTrackBox();
+      if (trackBoxProblem(want)) return;
+      if (want.code) {
+        const id = await resolveTrackCode(want.code);
+        if (id) play(id, want.start, want.end, want.code);
         return;
       }
-      const trackId = extractTrackId(raw);
-      if (!trackId) {
-        setStatus('Please enter a Spotify track link, track ID or Spotiky code');
-        return;
-      }
-      play(trackId, parseTime(timeBox), endBox);
+      play(want.id, want.start, want.end);
     }
 
     // Finds the song for a code on the track page, or says why it can't
@@ -687,24 +725,22 @@
     }
 
     function copyShareLink() {
-      const raw = document.getElementById('link').value;
-      const timeBox = document.getElementById('time').value.trim();
-      const endBox = document.getElementById('endTime').value.trim();
-      const coded = parseCodeText(raw);
-      if (coded) {
-        const start = parseTime(timeBox || coded.time || '0');
-        copyText(`${SITE_BASE}/${coded.code}${codeSuffix(start, cleanEnd(start, endBox || coded.end))}`);
-        return;
-      }
-      const trackId = extractTrackId(raw);
-      const seconds = parseTime(timeBox);
-      const end = cleanEnd(seconds, endBox);
-      if (!trackId) {
-        setStatus('Enter a track first');
-        return;
-      }
-      copyText(buildShareUrl(trackId, seconds, end));
+      const want = readTrackBox();
+      if (want && want.list) return copyText(`${SITE_BASE}/playlist/${want.list}`);
+      if (trackBoxProblem(want)) return;
+      if (want.code) return copyText(`${SITE_BASE}/${want.code}${codeSuffix(want.start, want.end)}`);
+      copyText(buildShareUrl(want.id, want.start, want.end));
     }
+
+    // Pasting a link that has a start or a clip puts its times in the boxes, replacing the old ones
+    document.getElementById('link').addEventListener('paste', e => {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      const found = !spotikyList(text) && (parseCodeText(text) || parseTrackText(text));
+      if (!found || !found.time) return;
+      const start = parseTime(found.time), end = cleanEnd(start, found.end);
+      document.getElementById('time').value = formatTime(start);
+      document.getElementById('endTime').value = end != null ? formatTime(end) : '';
+    });
 
     function fillTrackInputs(link, time, end) {
       document.getElementById('link').value = link;
@@ -793,7 +829,7 @@
       const s = decodeSafe(String(text).trim());
       if (!s) return null;
       if (/\/playlist\/|^spotify:playlist:/i.test(s)) {
-        if (!/spotify/i.test(s)) return { error: 'Paste a Spotiky playlist link to add its songs' };
+        if (spotikyList(s)) return { error: 'Paste a Spotiky playlist link to add its songs' };   // typed out by hand
         return { error: "That's a Spotify playlist link. Those are coming in a later version, so paste its songs' links for now." };
       }
       if (/\/(?:album|artist|episode|show)\/|^spotify:(?:album|artist|episode|show):/i.test(s)) {
@@ -804,14 +840,10 @@
         const start = coded.time ? parseTime(coded.time) : 0;
         return { code: coded.code, id: null, start, end: cleanEnd(start, coded.end) };
       }
-      let m = s.match(/track[/:]([a-zA-Z0-9]{22})/i);
-      let rest;
-      if (m) rest = s.slice(m.index + m[0].length);
-      else if ((m = s.match(/^([a-zA-Z0-9]{22})/))) rest = s.slice(22);
-      else return { error: 'Not a Spotify song link' };
-      const r = parseRange(rest);
+      const r = parseTrackText(s);
+      if (!r) return { error: 'Not a Spotify song link' };
       const start = r.time ? parseTime(r.time) : 0;
-      return { id: m[1], start, end: cleanEnd(start, r.end) };
+      return { id: r.id, start, end: cleanEnd(start, r.end) };
     }
 
     function itemToken(it) {
@@ -865,7 +897,7 @@
       const input = row.querySelector('input');
       input.value = value;
       input.addEventListener('paste', onRowPaste);
-      input.addEventListener('input', () => { refreshRow(row); onRowsChanged(); });
+      input.addEventListener('input', onRowInput);
       input.addEventListener('keydown', onRowKey);
       row.querySelector('.remove').addEventListener('click', () => removeRow(row));
       row.querySelector('.num').addEventListener('click', () => playFromRow(row));
@@ -967,15 +999,33 @@
       const text = (e.clipboardData || window.clipboardData).getData('text');
       const pieces = splitLinks(text);
       const input = e.target, row = input.closest('.row');
-      if (pieces.length <= 1) {
+      if (pieces.length <= 1 && !spotikyList(text)) {
         // One link: let it paste normally, then open a fresh row for the next one
         setTimeout(() => { if (row.item) nextEmptyRow(row); }, 0);
         return;
       }
-      e.preventDefault();
+      e.preventDefault();   // several links, or a Spotiky playlist link: its songs become rows
+      fillRows(row, pieces, !input.value.trim());
+    }
+
+    // Links that arrive without a paste event (a phone keyboard's clipboard button, drag and drop)
+    // spread over rows the same way
+    function onRowInput(e) {
+      const input = e.target, row = input.closest('.row');
+      const bulk = /^insertFrom(?:Paste|Drop)/.test(e.inputType || '') || (e.data && e.data.length > 1);
+      if (bulk && (splitLinks(input.value).length > 1 || spotikyList(input.value))) {
+        fillRows(row, splitLinks(input.value), true);
+        return;
+      }
+      refreshRow(row);
+      onRowsChanged();
+    }
+
+    // Puts links into this row (when it's free) and new rows after it
+    function fillRows(row, pieces, useRow) {
       let last = row;
-      if (!input.value.trim()) {
-        input.value = pieces.shift();
+      if (useRow && pieces.length) {
+        row.querySelector('input').value = pieces.shift();
         refreshRow(row);
       }
       for (const p of pieces) last = addRow(p, last);
@@ -1103,6 +1153,7 @@
       document.title = 'Spotiky – Playlist';
 
       const list = decodeSafe(location.pathname).replace(/^\/playlist\/?/i, '').replace(/\/+$/, '');
+      const shareNow = location.hash === '#share';   // sent here by Share as a code on the song page
       if (/^[a-zA-Z0-9]{22}$/.test(list)) {
         // A real Spotify playlist ID (f→k swap): supported in a later version
         document.getElementById('spotifyPlaylistLink').href = `https://open.spotify.com/playlist/${list}`;
@@ -1113,6 +1164,7 @@
       for (const piece of splitLinks(list)) addRow(piece);
       addRow('');   // an empty row, ready for pasting
       onRowsChanged();
+      if (shareNow) sharePlaylist();
     }
 
     // ---- Share as a code ------------------------------------------------------------
@@ -1147,33 +1199,22 @@
     }
 
     async function shareTrack() {
-      const raw = document.getElementById('link').value;
-      const timeBox = document.getElementById('time').value.trim();
-      const endBox = document.getElementById('endTime').value.trim();
-      const coded = parseCodeText(raw);
-      let id, start, end;
-      if (coded) {
-        start = parseTime(timeBox || coded.time || '0');
-        end = cleanEnd(start, endBox || coded.end);
-        id = await resolveTrackCode(coded.code);
-        if (!id) return;
-      } else {
-        id = extractTrackId(raw);
-        start = parseTime(timeBox);
-        end = cleanEnd(start, endBox);
-      }
-      if (!id) {
-        setStatus('Enter a track first');
-        return;
-      }
-      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`, coded ? coded.code : '');
+      const want = readTrackBox();
+      if (trackBoxProblem(want, true)) return;   // a Spotiky playlist link opens its page, ready to share
+      const id = want.code ? await resolveTrackCode(want.code) : want.id;
+      if (!id) return;
+      openShare({ type: 'track', id }, codeSuffix(want.start, want.end), code => `${SITE_BASE}/${code}`, want.code || '');
     }
 
     async function sharePlaylist() {
-      const pending = [...rowsEl.children]
-        .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing)
-        .map(r => r.item.lookup);
-      if (pending.length) await Promise.allSettled(pending);
+      // Wait for code rows to find their songs; a playlist code's songs can bring more codes
+      for (let round = 0; round < 3; round++) {
+        const pending = [...rowsEl.children]
+          .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing && r.item.lookup)
+          .map(r => r.item.lookup);
+        if (!pending.length) break;
+        await Promise.allSettled(pending);
+      }
       const items = [...rowsEl.children].map(r => r.item).filter(it => it && it.id);
       if (!items.length) {
         setStatus('Add at least one song first');
