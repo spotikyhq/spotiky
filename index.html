@@ -15,7 +15,8 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* the hieroglyph font is a fallback, so codes like 𓇰𓇶 show even where the system lacks one */
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", sans-serif;
       max-width: 520px;
       margin: 0 auto;
       padding: 32px 20px;
@@ -36,9 +37,11 @@
       border: none;
       background: #282828;
       color: white;
+      font-family: inherit;
     }
     input:focus { outline: 2px solid #1DB954; }
     button {
+      font-family: inherit;
       width: 100%;
       padding: 14px;
       margin-top: 8px;
@@ -97,7 +100,45 @@
     .notice { margin: 16px 0; background: #181818; border-radius: 12px; padding: 16px; font-size: 0.9rem; color: #b3b3b3; }
     .notice strong { display: block; color: #fff; margin-bottom: 4px; }
     .notice a { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: 8px; background: #1DB954; color: #fff; font-weight: 600; text-decoration: none; }
+
+    /* Share as a code: a Chinese card and a hieroglyph card, each character swappable */
+    .share { margin-top: 16px; background: #181818; border-radius: 12px; padding: 14px 14px 16px; }
+    .share-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-weight: 600; }
+    .share-head button { width: 32px; height: 32px; padding: 0; margin: 0; background: transparent; color: #b3b3b3; font-weight: 400; }
+    .share-head button:hover { background: #282828; color: #fff; }
+    .share-wait, .share-note { font-size: 0.8rem; color: #b3b3b3; margin: 10px 0 0; }
+    .share-error { font-size: 0.85rem; color: #f15e6c; margin: 0; }
+    .share-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .code-card { background: #222; border-radius: 10px; padding: 12px; min-width: 0; display: flex; flex-direction: column; }
+    .share-codes > .code-card:last-child:nth-child(odd) { grid-column: 1 / -1; }   /* a third card takes the whole row */
+    .code-label { font-size: 0.7rem; color: #b3b3b3; text-transform: uppercase; letter-spacing: 0.08em; }
+    .code-chars { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+    label.char { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 48px; padding: 4px 6px 6px; margin: 0; border-radius: 8px; color: #fff; font-size: 1rem; }
+    label.char.pickable { cursor: pointer; background: #2c2c2c; }
+    label.char.pickable:hover, label.char.pickable:focus-within { background: #353535; box-shadow: inset 0 0 0 1px #1DB954; }
+    .char .big { font-size: 34px; line-height: 1.25; }
+    .code-chars.eg .big { font-family: "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", "Apple Symbols", sans-serif; }
+    .code-chars.em .big { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+    .char .mean { font-size: 0.7rem; color: #b3b3b3; max-width: 76px; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
+    .char select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+    .code-word { font-size: 0.75rem; color: #b3b3b3; margin: 4px 0 0; }
+    .tone-rows { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+    .tones { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tones .tone { width: 32px; height: 32px; padding: 0; margin: 0; border-radius: 8px; background: #2c2c2c; font-size: 18px; font-weight: 400; line-height: 1;
+                   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+    .tones .tone:hover { background: #3e3e3e; }
+    .tones .tone[aria-pressed="true"] { background: #353535; box-shadow: inset 0 0 0 2px #1DB954; }
+    .code-why { font-size: 0.8rem; color: #ddd; margin: 6px 0 0; font-style: italic; }
+    .code-note { font-size: 0.75rem; color: #f15e6c; margin: 6px 0 0; overflow-wrap: anywhere; }
+    .code-note:empty { display: none; }
+    .code-note.ok { color: #1DB954; }
+    .code-card .copy-code { margin-top: auto; padding: 10px; font-size: 0.85rem; }
+    .code-card .copy-code:disabled { opacity: 0.45; cursor: default; }
+    .code-card .copy-code:disabled:hover { background: #282828; }
   </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap">
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
@@ -106,7 +147,7 @@
 
   <section id="trackView">
     <label for="link">Spotify track link or ID</label>
-    <input id="link" placeholder="https://open.spotify.com/track/… or track ID" autocomplete="off">
+    <input id="link" placeholder="Spotify link, track ID or Spotiky code" autocomplete="off">
 
     <label for="time">Start time</label>
     <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
@@ -121,6 +162,7 @@
 
     <button onclick="play()">Play from timestamp</button>
     <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
+    <button class="secondary" onclick="shareTrack()">Share as a code</button>
   </section>
 
   <section id="playlistView" hidden>
@@ -132,7 +174,7 @@
 
     <div class="label">Songs</div>
     <div id="rows"></div>
-    <p class="row-help">Paste song links one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>.</p>
+    <p class="row-help">Paste song links or Spotiky codes, one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>. After a code, the time can go right after it: <code>夜光1:23-1:45</code> or <code>🌃💡1:23-1:45</code>.</p>
 
     <button onclick="playPlaylist(0)">Play playlist</button>
     <div class="pair" id="plControls" hidden>
@@ -140,7 +182,10 @@
       <button class="secondary" onclick="plStep(1)">Next ⏭</button>
     </div>
     <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
+    <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
   </section>
+
+  <div id="sharePanel" class="share" hidden></div>
 
   <div id="status">Waiting for player…</div>
   <button id="replayBtn" class="secondary" hidden></button>
@@ -164,19 +209,20 @@
     Full tracks work best when you're logged into Spotify in this browser.<br>
     Otherwise you'll get a short preview.<br><br>
     Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code> or <code>$1.23</code><br>
-    Clips: <code>open.spotiky.com/track/ID$1:23-1:45</code><br><br>
+    Clips: <code>open.spotiky.com/track/ID$1:23-1:45</code><br>
+    Codes: <code>spotiky.com/夜光1:23-1:45</code> or <code>spotiky.com/🌃💡1:23-1:45</code><br><br>
     <a href="/playlist">Make a playlist →</a>
   </p>
   <p class="hint" id="playlistHint" hidden>
     Playlists play full songs and exact clips when you're logged into Spotify in this browser.<br>
-    The link is the playlist: <code>spotiky.com/playlist/ID1$83,ID2$1:23-1:45,ID3</code><br><br>
+    The link is the playlist: <code>spotiky.com/playlist/ID1$83,夜光1:23-1:45,ID3</code><br><br>
     <a href="/">← Play a single song</a>
   </p>
 
   <script>
     const PREVIEW_WORKER = "https://spotiky-preview.spotikyhq.workers.dev";
     const SHARE_BASE = "https://open.spotiky.com";   // track links mirror open.spotify.com
-    const PLAYLIST_BASE = "https://spotiky.com";     // playlist links don't need open.
+    const SITE_BASE = "https://spotiky.com";         // playlist and code links don't need open.
     const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : 'track';
 
     let controller = null;
@@ -246,6 +292,88 @@
       const idMatch = s.match(/\/track\/([a-zA-Z0-9]{22})/i);
       if (!idMatch) return null;
       return { id: idMatch[1], ...parseRange(s.slice(idMatch.index + idMatch[0].length)) };
+    }
+
+    // ---- Spotiky codes ------------------------------------------------------------
+    // A code is a few Chinese characters, hieroglyphs or emoji that stand for a song. Times
+    // can follow a code directly, because code characters and digits can't run together:
+    //   /夜光83-105   /track/夜光1:23-1:45   /夜光.4-.8   /夜光$1.23   /𓇰𓇶3.23-3.24
+    // A skin tone isn't part of a code: /👋🏾🌙83 and /👋🌙83 are the same song, and the
+    // person sharing picks the tone for their link.
+    const CODE_CHARS = String.raw`\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}`;
+    const stripVS = s => String(s).replace(/[︎️]/g, '');   // ❤️ and ❤ are one code
+    const TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
+    const TONE_NAMES = ['Default', 'Light', 'Medium-light', 'Medium', 'Medium-dark', 'Dark'];
+    const stripTones = s => String(s).replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
+    const CODE_RANGE_RE = new RegExp(String.raw`^(?:\$|[?&]t=|\.)?` + RANGE, 'i');
+    const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
+    const CODE_IN_TEXT_RE = new RegExp(String.raw`(?:^|\/)(?:track\/)?([${CODE_CHARS}]+)(.*)$`, 'u');
+
+    function parseCodeRange(rest) {
+      const m = String(rest).match(CODE_RANGE_RE);
+      return m ? { time: m[1], end: m[2] || null } : { time: null, end: null };
+    }
+
+    // A code link's path: /夜光83-105 or /track/夜光1:23-1:45
+    function parseCodePath(path) {
+      const m = stripVS(decodeSafe(String(path))).match(CODE_IN_PATH_RE);
+      return m ? { code: m[1], ...parseCodeRange(m[2]) } : null;
+    }
+
+    // A code typed or pasted anywhere: 夜光1:23, spotiky.com/夜光83, open.spotiky.com/track/夜光
+    function parseCodeText(text) {
+      const s = stripVS(decodeSafe(String(text).trim()));
+      if (/spotify\.com|^spotify:/i.test(s)) return null;   // Spotify's own links never hold codes
+      const m = s.match(CODE_IN_TEXT_RE);
+      return m ? { code: m[1], ...parseCodeRange(m[2]) } : null;
+    }
+
+    // The time part of a code link, in seconds: "83-105", "83", or "" for the whole song
+    function codeSuffix(start, end) {
+      if (!start && end == null) return '';
+      return `${start}` + (end != null ? `-${end}` : '');
+    }
+
+    // Codes are looked up in the Spotiky Worker, a batch at a time. Resolves
+    // {type: 'track', id}, or null when no song has the code yet; rejects when
+    // the lookup itself fails.
+    const codeCache = new Map();
+    let codeBatch = null;
+    function lookupCode(code) {
+      code = stripTones(stripVS(code));   // codes are kept without skin tones
+      if (!codeCache.has(code)) {
+        codeCache.set(code, new Promise((resolve, reject) => {
+          if (!codeBatch) {
+            codeBatch = new Map();
+            setTimeout(flushCodes, 0);
+          }
+          codeBatch.set(code, { resolve, reject });
+        }));
+      }
+      return codeCache.get(code);
+    }
+
+    async function flushCodes() {
+      const batch = codeBatch;
+      codeBatch = null;
+      const codes = [...batch.keys()];
+      for (let i = 0; i < codes.length; i += 50) {
+        const chunk = codes.slice(i, i + 50);
+        try {
+          const res = await fetch(`${PREVIEW_WORKER}/codes?c=${encodeURIComponent(chunk.join(','))}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error((data && data.error) || 'Code lookup failed');
+          chunk.forEach(c => batch.get(c).resolve(cleanCodeRecord(data[c])));
+        } catch (e) {
+          chunk.forEach(c => { codeCache.delete(c); batch.get(c).reject(e); });
+        }
+      }
+    }
+
+    function cleanCodeRecord(r) {
+      if (r && r.type === 'track' && /^[a-zA-Z0-9]{22}$/.test(r.id)) return { type: 'track', id: r.id };
+      if (r && r.type === 'playlist' && typeof r.items === 'string' && r.items.length <= 4000) return { type: 'playlist', items: r.items };
+      return null;
     }
 
     // End time in seconds, or null when it's missing or not after the start
@@ -470,32 +598,27 @@
     }
 
     // ---- Single track page ------------------------------------------------------
-    function play(trackId = null, seconds = null, end = null) {
-      if (!trackId) {
-        trackId = extractTrackId(document.getElementById('link').value);
-        seconds = parseTime(document.getElementById('time').value);
-        end = document.getElementById('endTime').value;
-      }
-      if (!trackId) {
-        setStatus('Please enter a valid Spotify track link or ID');
-        return;
-      }
+    function play(trackId = null, seconds = null, end = null, code = null) {
+      if (!trackId) return playFromInputs();
       end = cleanEnd(seconds, end);
 
       currentTrackId = trackId;
       document.getElementById('previewPlayer').style.display = 'none';
       document.getElementById('previewAudio').src = '';
 
-      // Clean shareable URL
-      history.replaceState(null, '', `/track/${trackId}$${seconds}` + (end != null ? `-${end}` : ''));
+      // Clean shareable URL (a code link stays a code link)
+      history.replaceState(null, '', code
+        ? `/${code}${codeSuffix(seconds, end)}`
+        : `/track/${trackId}$${seconds}` + (end != null ? `-${end}` : ''));
 
       if (!controller) {
-        pendingAction = () => play(trackId, seconds, end);
+        pendingAction = () => play(trackId, seconds, end, code);
         setStatus('Player loading… will start automatically');
         return;
       }
 
       startClip(trackId, seconds, end, {
+        code,
         onEnd: end != null ? clipEnded : null,
         onPlay: () => {
           setStatus(`Playing from ${formatTime(seconds)}`);
@@ -507,10 +630,48 @@
       });
     }
 
+    // The Play button: a Spotify link or ID, or a Spotiky code (times can be typed right after a code)
+    async function playFromInputs() {
+      const raw = document.getElementById('link').value;
+      const timeBox = document.getElementById('time').value.trim();
+      const endBox = document.getElementById('endTime').value.trim();
+      const coded = parseCodeText(raw);
+      if (coded) {
+        const start = parseTime(timeBox || coded.time || '0');
+        const end = cleanEnd(start, endBox || coded.end);
+        const id = await resolveTrackCode(coded.code);
+        if (id) play(id, start, end, coded.code);
+        return;
+      }
+      const trackId = extractTrackId(raw);
+      if (!trackId) {
+        setStatus('Please enter a Spotify track link, track ID or Spotiky code');
+        return;
+      }
+      play(trackId, parseTime(timeBox), endBox);
+    }
+
+    // Finds the song for a code on the track page, or says why it can't
+    async function resolveTrackCode(code) {
+      setStatus(`Looking up ${code}…`);
+      try {
+        const rec = await lookupCode(code);
+        if (rec && rec.type === 'playlist') {   // a playlist's code: open the playlist page
+          location.replace('/playlist/' + code);
+          return null;
+        }
+        if (rec) return rec.id;
+        setStatus(`No song has the code ${code} yet.`);
+      } catch (e) {
+        setStatus("Couldn't look up that code right now. Try again in a moment.");
+      }
+      return null;
+    }
+
     function clipEnded(c) {
       controller.pause();
       setStatus(`Clip ended (${formatTime(c.start)}–${formatTime(c.end)})`);
-      showReplay('↺ Replay clip', () => play(c.id, c.start, c.end));
+      showReplay('↺ Replay clip', () => play(c.id, c.start, c.end, c.code));
     }
 
     // "Set start here" / "Set end here": use where the song is right now
@@ -526,9 +687,18 @@
     }
 
     function copyShareLink() {
-      const trackId = extractTrackId(document.getElementById('link').value);
-      const seconds = parseTime(document.getElementById('time').value);
-      const end = cleanEnd(seconds, document.getElementById('endTime').value);
+      const raw = document.getElementById('link').value;
+      const timeBox = document.getElementById('time').value.trim();
+      const endBox = document.getElementById('endTime').value.trim();
+      const coded = parseCodeText(raw);
+      if (coded) {
+        const start = parseTime(timeBox || coded.time || '0');
+        copyText(`${SITE_BASE}/${coded.code}${codeSuffix(start, cleanEnd(start, endBox || coded.end))}`);
+        return;
+      }
+      const trackId = extractTrackId(raw);
+      const seconds = parseTime(timeBox);
+      const end = cleanEnd(seconds, endBox);
       if (!trackId) {
         setStatus('Enter a track first');
         return;
@@ -543,6 +713,17 @@
     }
 
     function readUrlAndPlay() {
+      // Code links: /夜光83-105 or /track/夜光1:23-1:45
+      const coded = parseCodePath(window.location.pathname + window.location.search);
+      if (coded) {
+        const time = coded.time || '0';
+        const start = parseTime(time);
+        const end = cleanEnd(start, coded.end);
+        fillTrackInputs(coded.code, time, end != null ? coded.end : '');
+        resolveTrackCode(coded.code).then(id => { if (id) play(id, start, end, coded.code); });
+        return;
+      }
+
       // Share links: /track/ID plus times (no time = play from the start)
       const share = parseShareUrl(window.location.href);
       if (share) {
@@ -588,15 +769,20 @@
     // A pasted Spotiky playlist link turns into its songs.
     function splitLinks(text) {
       const out = [];
+      // A piece that's only a time, like the "23" in 夜光1,23, is a decimal comma, not a new song
+      const push = piece => {
+        if (out.length && /^[\d.:,\-$]{1,12}$/.test(piece)) out[out.length - 1] += ',' + piece;
+        else out.push(piece);
+      };
       for (const token of decodeSafe(String(text)).split(/\s+/)) {
         if (!token) continue;
         const pm = token.match(/^(.*?\/playlist\/)(.*)$/i);
         if (pm && !/spotify\.com/i.test(pm[1]) && !/^[a-zA-Z0-9]{22}\/?(?:[?#].*)?$/.test(pm[2])) {
-          out.push(...pm[2].replace(/[?#].*$/, '').split(',').filter(Boolean));
+          pm[2].replace(/[?#].*$/, '').split(',').filter(Boolean).forEach(push);
         } else if (pm) {
           out.push(token);      // a Spotify playlist link: flagged as not supported yet
         } else {
-          out.push(...token.split(',').filter(Boolean));
+          token.split(',').filter(Boolean).forEach(push);
         }
       }
       return out;
@@ -607,10 +793,16 @@
       const s = decodeSafe(String(text).trim());
       if (!s) return null;
       if (/\/playlist\/|^spotify:playlist:/i.test(s)) {
+        if (!/spotify/i.test(s)) return { error: 'Paste a Spotiky playlist link to add its songs' };
         return { error: "That's a Spotify playlist link. Those are coming in a later version, so paste its songs' links for now." };
       }
       if (/\/(?:album|artist|episode|show)\/|^spotify:(?:album|artist|episode|show):/i.test(s)) {
         return { error: 'Only song links work here' };
+      }
+      const coded = parseCodeText(s);
+      if (coded) {
+        const start = coded.time ? parseTime(coded.time) : 0;
+        return { code: coded.code, id: null, start, end: cleanEnd(start, coded.end) };
       }
       let m = s.match(/track[/:]([a-zA-Z0-9]{22})/i);
       let rest;
@@ -623,6 +815,7 @@
     }
 
     function itemToken(it) {
+      if (it.code) return it.code + codeSuffix(it.start, it.end);
       if (!it.start && it.end == null) return it.id;
       return `${it.id}$${it.start}` + (it.end != null ? `-${it.end}` : '');
     }
@@ -666,7 +859,7 @@
       const row = document.createElement('div');
       row.className = 'row';
       row.innerHTML = '<span class="num" title="Play from this song"></span>'
-        + '<input autocomplete="off" enterkeyhint="next" placeholder="Paste a Spotify or Spotiky song link">'
+        + '<input autocomplete="off" enterkeyhint="next" placeholder="Paste a song link or Spotiky code">'
         + '<button class="remove" type="button" title="Remove" aria-label="Remove song">✕</button>'
         + '<div class="info"></div>';
       const input = row.querySelector('input');
@@ -685,21 +878,77 @@
     function refreshRow(row) {
       const info = row.querySelector('.info');
       const item = parseItem(row.querySelector('input').value);
-      row.item = item && item.id ? item : null;
+      row.item = item && !item.error ? item : null;
       info.classList.toggle('bad', !!(item && item.error));
       if (!item) { info.textContent = ''; return; }
       if (item.error) { info.textContent = item.error; return; }
+      if (item.code) { lookupRowCode(row, item); return; }
+      showRowSong(row, item);
+    }
+
+    function showRowSong(row, item) {
+      const info = row.querySelector('.info');
       info.textContent = rangeLabel(item);
       trackName(item.id).then(name => {
-        if (name && row.item && row.item.id === item.id) info.textContent = `${name} · ${rangeLabel(row.item)}`;
+        if (name && row.item === item) info.textContent = `${name} · ${rangeLabel(item)}`;
+      });
+    }
+
+    // A code row shows its song once the Worker says which song the code is
+    function lookupRowCode(row, item) {
+      const info = row.querySelector('.info');
+      info.textContent = `Looking up ${item.code}…`;
+      const fail = text => {
+        item.missing = true;
+        info.classList.add('bad');
+        info.textContent = text;
+      };
+      item.lookup = lookupCode(item.code).then(rec => {
+        if (row.item !== item) return;
+        if (rec && rec.type === 'playlist') {
+          if (row.fromList) fail("A playlist can't go inside another playlist");
+          else return expandListRow(row, item, rec);
+        } else if (rec) {
+          item.id = rec.id;
+          showRowSong(row, item);
+        } else {
+          fail(`No song has the code ${item.code} yet`);
+        }
+        onRowsChanged();
+      }, () => {
+        if (row.item !== item) return;
+        fail("Couldn't look up this code right now");
+        onRowsChanged();
       });
     }
 
     // Numbers, and the address bar, which is always the share link
     function onRowsChanged() {
       let n = 0;
-      for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item ? ++n : '';
-      history.replaceState(null, '', playlistPath(currentItems()));
+      for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item && !row.item.missing ? ++n : '';
+      const path = playlistPath(currentItems());
+      // A playlist opened from its code keeps the short link until its songs change
+      history.replaceState(null, '', listCode && path === '/playlist/' + listCode.items ? '/playlist/' + listCode.code : path);
+    }
+
+    // A playlist code in a row turns into that playlist's songs (one level deep)
+    let listCode = null;
+    function expandListRow(row, item, rec) {
+      const pieces = splitLinks(rec.items);
+      const onlyRow = [...rowsEl.children].filter(r => r.item).length === 1;
+      if (onlyRow) listCode = { code: item.code, items: rec.items };
+      let last = row;
+      pieces.forEach((p, i) => {
+        if (i === 0) {
+          row.fromList = true;
+          row.querySelector('input').value = p;
+          refreshRow(row);
+        } else {
+          last = addRow(p, last);
+          last.fromList = true;
+        }
+      });
+      onRowsChanged();
     }
 
     function currentItems() {
@@ -761,17 +1010,29 @@
         setStatus('Add at least one song first');
         return;
       }
-      copyText(PLAYLIST_BASE + playlistPath(items));
+      copyText(SITE_BASE + playlistPath(items));
     }
 
     function markPlaying(row) {
       for (const r of rowsEl.children) r.classList.toggle('playing', r === row);
     }
 
-    function playPlaylist(from = 0) {
-      const entries = [...rowsEl.children].filter(r => r.item).map(r => ({ row: r, item: r.item }));
-      if (!entries.length) {
+    async function playPlaylist(from = 0) {
+      if (![...rowsEl.children].some(r => r.item)) {
         setStatus('Add at least one song link first');
+        return;
+      }
+      // Codes still being looked up finish first; codes without a song are skipped
+      const pending = [...rowsEl.children]
+        .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing)
+        .map(r => r.item.lookup);
+      if (pending.length) {
+        setStatus('Looking up codes…');
+        await Promise.allSettled(pending);
+      }
+      const entries = [...rowsEl.children].filter(r => r.item && r.item.id).map(r => ({ row: r, item: r.item }));
+      if (!entries.length) {
+        setStatus("None of these codes has a song yet");
         return;
       }
       document.getElementById('loginPrompt').hidden = true;
@@ -785,7 +1046,7 @@
     }
 
     function playFromRow(row) {
-      const i = [...rowsEl.children].filter(r => r.item).indexOf(row);
+      const i = [...rowsEl.children].filter(r => r.item && r.item.id).indexOf(row);
       if (i >= 0) playPlaylist(i);
     }
 
@@ -854,6 +1115,364 @@
       onRowsChanged();
     }
 
+    // ---- Share as a code ------------------------------------------------------------
+    // The Worker suggests a Chinese, a hieroglyph and an emoji code from what the song or
+    // playlist is about. Tap a character to swap it. Copying a link saves the codes,
+    // first come, first served; after that they belong to this song for good. Each person or
+    // hand in an emoji code can take its own skin tone; tones are only ever in the link.
+    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji' };
+    const SCRIPTS = ['zh', 'eg', 'em'];
+    let share = null;   // { target, suffix, linkFor, shared, zh, eg, em, tones, busy }
+
+    function h(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+
+    async function postWorker(path, body) {
+      try {
+        const res = await fetch(`${PREVIEW_WORKER}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        return { ok: res.ok, status: res.status, data: data || {} };
+      } catch (e) {
+        return { ok: false, status: 0, data: {} };
+      }
+    }
+
+    async function shareTrack() {
+      const raw = document.getElementById('link').value;
+      const timeBox = document.getElementById('time').value.trim();
+      const endBox = document.getElementById('endTime').value.trim();
+      const coded = parseCodeText(raw);
+      let id, start, end;
+      if (coded) {
+        start = parseTime(timeBox || coded.time || '0');
+        end = cleanEnd(start, endBox || coded.end);
+        id = await resolveTrackCode(coded.code);
+        if (!id) return;
+      } else {
+        id = extractTrackId(raw);
+        start = parseTime(timeBox);
+        end = cleanEnd(start, endBox);
+      }
+      if (!id) {
+        setStatus('Enter a track first');
+        return;
+      }
+      openShare({ type: 'track', id }, codeSuffix(start, end), code => `${SITE_BASE}/${code}`, coded ? coded.code : '');
+    }
+
+    async function sharePlaylist() {
+      const pending = [...rowsEl.children]
+        .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing)
+        .map(r => r.item.lookup);
+      if (pending.length) await Promise.allSettled(pending);
+      const items = [...rowsEl.children].map(r => r.item).filter(it => it && it.id);
+      if (!items.length) {
+        setStatus('Add at least one song first');
+        return;
+      }
+      const list = stripTones(playlistPath(items).replace(/^\/playlist\//, ''));   // other skin tones, same playlist
+      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`, decodeSafe(location.pathname).replace(/^\/playlist\/?/i, ''));
+    }
+
+    // shared: the code as it is in the link being shared (with its skin tones), if it's a code
+    async function openShare(target, suffix, linkFor, shared = '') {
+      const panel = document.getElementById('sharePanel');
+      share = { target, suffix, linkFor, shared, zh: null, eg: null, em: null, tones: [], busy: false };
+      const mine = share;
+      panel.hidden = false;
+      panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
+      const { ok, status, data } = await postWorker('/suggest', target);
+      if (share !== mine) return;   // a newer share started meanwhile
+      if (!ok) return showShareError(status, data);
+      for (const s of SCRIPTS) share[s] = data[s] || null;   // each one is saved already, or a suggestion
+      if (!SCRIPTS.some(s => share[s])) return showShareError(502, {});
+      share.tones = startTones();
+      renderShare();
+    }
+
+    function shareHead() {
+      const head = h('div', 'share-head');
+      head.append(h('span', null, 'Share as a code'));
+      const close = h('button', null, '✕');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', closeShare);
+      head.append(close);
+      return head;
+    }
+
+    function closeShare() {
+      share = null;
+      document.getElementById('sharePanel').hidden = true;
+    }
+
+    function showShareError(status, data) {
+      const msg = status === 503 ? "Codes aren't switched on yet. The Spotiky Worker needs its CODES and AI bindings."
+        : status === 0 ? "Couldn't reach Spotiky's code service. Check your connection and try again."
+        : (data && data.error) || 'Something went wrong making codes. Try again.';
+      document.getElementById('sharePanel').replaceChildren(shareHead(), h('p', 'share-error', msg));
+    }
+
+    function renderShare() {
+      if (!share) return;
+      const what = share.target.type === 'track' ? 'song' : 'playlist';
+      const cards = h('div', 'share-codes');
+      for (const script of SCRIPTS) if (share[script]) cards.append(codeCard(script));
+      let note = SCRIPTS.every(s => !share[s] || share[s].saved)
+        ? `These are this ${what}'s codes. They stay the same for everyone.`
+        : `Tap a character to swap it. Copying a link saves the new codes for this ${what}, first come, first served.`;
+      if (hasTones()) note += ` Any skin tone opens the same ${what}.`;
+      document.getElementById('sharePanel').replaceChildren(shareHead(), cards, h('p', 'share-note', note));
+    }
+
+    const hasTones = () => !!(share.em && share.em.chars.some(ch => ch.toneable));
+
+    function codeCard(script) {
+      const c = share[script];
+      const card = h('section', 'code-card');
+      card.dataset.script = script;
+      card.append(h('div', 'code-label', SCRIPT_NAMES[script]));
+      const chars = h('div', 'code-chars ' + script);
+      c.chars.forEach((ch, i) => chars.append(charPicker(script, i)));
+      card.append(chars);
+      if (script === 'em' && hasTones()) card.append(tonePickers());
+      if (script === 'zh' && c.word) card.append(h('p', 'code-word', `Also a word: ${c.word}`));
+      if (c.why) card.append(h('p', 'code-why', c.why));
+      card.append(h('p', 'code-note', c.taken ? 'Taken by another song. Swap a character.' : ''));
+      const btn = h('button', 'secondary copy-code', `Copy ${linkCode(script)} link`);
+      btn.type = 'button';
+      btn.disabled = !!c.taken;
+      btn.addEventListener('click', () => copyCode(script));
+      card.append(btn);
+      return card;
+    }
+
+    function charLabel(script, ch) {
+      return script === 'zh' ? (ch.meaning || '') : (ch.name || ch.meaning || '');
+    }
+
+    // Emoji i as it shows in this link, with its own skin tone when it can take one
+    function shownEmoji(i) {
+      const ch = share.em.chars[i];
+      return ch.char + (ch.toneable ? share.tones[i] || '' : '');
+    }
+
+    // The tone an emoji gets when it's swapped into place i: the tone already picked
+    // for that place, or this browser's usual tone for the emoji
+    function toneIfPicked(i, o) {
+      if (!o.toneable) return '';
+      return share.em.chars[i].toneable ? share.tones[i] || '' : usualTone(o.char);
+    }
+
+    // The code as it goes in the link (the saved code never has a tone)
+    function linkCode(script) {
+      return script === 'em' ? share.em.chars.map((ch, i) => shownEmoji(i)).join('') : share[script].code;
+    }
+
+    function charPicker(script, i) {
+      const c = share[script], ch = c.chars[i];
+      const face = script === 'em' ? shownEmoji(i) : ch.char;
+      const wrap = h('label', 'char');
+      const big = h('span', 'big', face);
+      big.setAttribute('aria-hidden', 'true');
+      wrap.append(big, h('span', 'mean', charLabel(script, ch)));
+      const options = (c.options && c.options[i]) || [];
+      if (!c.saved && options.length > 1) {
+        const sel = document.createElement('select');
+        const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji' }[script];
+        sel.setAttribute('aria-label', `${noun} ${i + 1}: ${face} ${charLabel(script, ch)}. Change it`);
+        for (const o of options) {
+          const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : script === 'em' ? o.name : o.meaning;
+          const look = script === 'em' ? o.char + toneIfPicked(i, o) : o.char;
+          const opt = h('option', null, meaning ? `${look}  ${meaning}` : look);
+          opt.value = o.char;
+          opt.selected = o.char === ch.char;
+          sel.append(opt);
+        }
+        sel.addEventListener('change', () => swapChar(script, i, sel.value));
+        wrap.append(sel);
+        wrap.classList.add('pickable');
+      }
+      return wrap;
+    }
+
+    // A row of six swatches for each person or hand in the code, so each takes its own skin
+    // tone. Only this link changes: every tone opens the same song, so a tone can't make a new code.
+    function tonePickers() {
+      const rows = h('div', 'tone-rows');
+      share.em.chars.forEach((ch, i) => {
+        if (!ch.toneable) return;
+        const row = h('div', 'tones');
+        row.setAttribute('role', 'group');
+        row.setAttribute('aria-label', `Skin tone for ${ch.name || ch.char}`);
+        TONES.forEach((t, k) => {
+          const b = h('button', 'tone', ch.char + t);
+          b.type = 'button';
+          b.title = `${TONE_NAMES[k]} skin tone`;
+          b.setAttribute('aria-label', b.title);
+          b.setAttribute('aria-pressed', String((share.tones[i] || '') === t));
+          b.dataset.at = `${i}-${k}`;
+          b.addEventListener('click', () => pickTone(i, k));
+          row.append(b);
+        });
+        rows.append(row);
+      });
+      return rows;
+    }
+
+    function pickTone(i, k) {
+      share.tones[i] = TONES[k];
+      rememberTone(share.em.chars[i].char, TONES[k]);
+      renderShare();
+      const again = document.querySelector(`#sharePanel .tone[data-at="${i}-${k}"]`);
+      if (again) again.focus();
+    }
+
+    // Each emoji's first tone: the one it has in the link being shared, when that link is this
+    // emoji code; otherwise its usual tone in this browser
+    function startTones() {
+      if (!share.em) return [];
+      const fromLink = stripTones(stripVS(share.shared)) === share.em.code ? tonesByPlace(share.shared) : null;
+      const saved = savedTones();
+      return share.em.chars.map((ch, i) => (!ch.toneable ? '' : fromLink ? fromLink[i] || '' : usualTone(ch.char, saved)));
+    }
+
+    // The tone after each character: "👋🏻🌙🙌" -> ["🏻", "", ""]
+    function tonesByPlace(text) {
+      const out = [];
+      for (const c of stripVS(text)) {
+        if (/^[\u{1F3FB}-\u{1F3FF}]$/u.test(c)) { if (out.length) out[out.length - 1] = c; }
+        else out.push('');
+      }
+      return out;
+    }
+
+    // Tones this browser picked before, like an emoji keyboard remembers them: { "👋": "🏽", last: "🏽" }
+    const TONE_KEY = 'spotiky-skin-tones';
+    function savedTones() {
+      try {
+        const v = JSON.parse(localStorage.getItem(TONE_KEY) || '{}');
+        return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    // The last tone picked for this emoji, or else the last tone picked at all
+    function usualTone(ch, saved = savedTones()) {
+      const t = Object.prototype.hasOwnProperty.call(saved, ch) ? saved[ch] : saved.last;
+      return TONES.includes(t) ? t : '';
+    }
+    function rememberTone(ch, t) {
+      try {
+        const saved = savedTones();
+        saved[ch] = t;
+        saved.last = t;
+        localStorage.setItem(TONE_KEY, JSON.stringify(saved));
+      } catch (e) {}
+    }
+
+    async function swapChar(script, i, value) {
+      const c = share[script];
+      const pick = (c.options[i] || []).find(o => o.char === value);
+      if (!pick) return;
+      if (script === 'em') share.tones[i] = toneIfPicked(i, pick);
+      c.chars = c.chars.map((ch, j) => (j === i ? pick : ch));
+      c.code = c.chars.map(ch => ch.char).join('');
+      c.word = null;   // the "also a word" note was for the suggested pair; saving checks again
+      c.taken = false;
+      renderShare();
+      try {   // warn early when another song has it (saving checks again, look-alikes too)
+        const rec = await lookupCode(c.code);
+        if (share && share[script] === c && rec && !sameShareTarget(rec)) {
+          c.taken = true;
+          renderShare();
+        }
+      } catch (e) {}
+    }
+
+    function sameShareTarget(rec) {
+      const t = share.target;
+      return rec.type === t.type && (t.type === 'track' ? rec.id === t.id : rec.items === t.items);
+    }
+
+    function setCardNote(script, text, ok) {
+      const note = document.querySelector(`#sharePanel .code-card[data-script="${script}"] .code-note`);
+      if (!note) return;
+      note.textContent = text;
+      note.classList.toggle('ok', !!ok);
+    }
+
+    // Copy right away, inside the tap, with the link filled in once the codes are saved,
+    // so browsers that only allow copying during a tap (Safari) still copy it
+    function copyCode(script) {
+      if (!share || share.busy) return;
+      const linkPromise = share[script].saved ? Promise.resolve(shareLink(script)) : claimShare(script);
+      let copying;
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        const blob = linkPromise.then(link => new Blob([link], { type: 'text/plain' }));
+        copying = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+      } else if (navigator.clipboard) {
+        copying = linkPromise.then(link => navigator.clipboard.writeText(link));
+      } else {
+        copying = Promise.reject(new Error('no clipboard'));
+      }
+      copying.then(() => true, () => false).then(copied => linkPromise.then(link => {
+        if (copied) {
+          setCardNote(script, 'Link copied!', true);
+          setStatus('Link copied!');
+        } else {
+          setCardNote(script, link, true);   // copying was refused: show the link to copy by hand
+        }
+      }, () => {}));
+    }
+
+    function shareLink(script) {
+      return share.linkFor(linkCode(script)) + share.suffix;
+    }
+
+    async function claimShare(script) {
+      share.busy = true;
+      setCardNote(script, 'Saving…', true);
+      const body = { ...share.target };   // only codes not saved yet; saved ones never change
+      for (const s of SCRIPTS) {
+        const c = share[s];
+        if (c && !c.saved) body[s] = s === 'zh' ? { code: c.code, chars: c.chars, why: c.why } : { code: c.code, why: c.why };
+      }
+      const mine = share;
+      const { ok, status, data } = await postWorker('/claim', body);
+      mine.busy = false;
+      if (share !== mine) throw new Error('closed');
+      if (!ok) {
+        if (status === 409 && data.script && share[data.script]) {
+          share[data.script].taken = true;
+          renderShare();
+          setCardNote(data.script, `${data.code} just went to another song. Swap a character.`);
+        } else {
+          showShareError(status, data);
+        }
+        throw new Error('not saved');
+      }
+      // what's saved now; when another sharer saved this song first, theirs come back
+      const emBefore = share.em && share.em.code;
+      for (const s of SCRIPTS) share[s] = data[s] || (share[s] && share[s].saved ? share[s] : null);
+      if (share.em && share.em.code !== emBefore) share.tones = startTones();
+      renderShare();
+      if (!share[script]) throw new Error('no code');
+      return shareLink(script);
+    }
+
+    // A different song in the box means the open share card is out of date
+    document.getElementById('link').addEventListener('input', () => { if (share) closeShare(); });
+
     window.onSpotifyIframeApiReady = (IFrameAPI) => {
       const element = document.getElementById('embed');
       IFrameAPI.createController(element, {
@@ -864,10 +1483,13 @@
         controller = c;
         c.addListener('playback_update', (e) => onPlaybackUpdate(e.data || {}));
 
-        if (view === 'playlist') {
-          setStatus(currentItems().length ? 'Player ready – press Play playlist' : 'Player ready – paste some song links');
-        } else {
-          setStatus('Player ready – enter a track');
+        // Only replace the first "Waiting for player…" message, never news like an unknown code
+        if (document.getElementById('status').textContent === 'Waiting for player…') {
+          if (view === 'playlist') {
+            setStatus(currentItems().length ? 'Player ready – press Play playlist' : 'Player ready – paste some song links');
+          } else {
+            setStatus('Player ready – enter a track');
+          }
         }
         if (pendingAction) {
           const action = pendingAction;
