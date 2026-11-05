@@ -138,7 +138,13 @@
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap">
+  <!-- The hieroglyph font loads without holding up the page (media="print" until it arrives) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap" media="print" onload="this.media='all'">
+  <script>
+    // Spotify's player script calls this once, as soon as it loads, which can be before the
+    // page's own script has run. Keep the player API until the page picks it up.
+    window.onSpotifyIframeApiReady = api => { window.spotifyIframeApi = api; };
+  </script>
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
@@ -1514,7 +1520,7 @@
     // A different song in the box means the open share card is out of date
     document.getElementById('link').addEventListener('input', () => { if (share) closeShare(); });
 
-    window.onSpotifyIframeApiReady = (IFrameAPI) => {
+    function startPlayer(IFrameAPI) {
       const element = document.getElementById('embed');
       IFrameAPI.createController(element, {
         width: '100%',
@@ -1538,7 +1544,7 @@
           action();
         }
       });
-    };
+    }
 
     if (view === 'playlist') {
       initPlaylistView();
@@ -1547,6 +1553,10 @@
       window.addEventListener('hashchange', readUrlAndPlay);
       window.addEventListener('popstate', readUrlAndPlay);
     }
+
+    // Connect to Spotify's player whether its script finished before this one or finishes later
+    if (window.spotifyIframeApi) startPlayer(window.spotifyIframeApi);
+    else window.onSpotifyIframeApiReady = startPlayer;
   </script>
 </body>
 </html>
