@@ -25,7 +25,7 @@
       line-height: 1.5;
     }
     h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; }
-    .subtitle { color: #b3b3b3; margin: 0 0 28px; font-size: 0.95rem; }
+    .subtitle { color: #b3b3b3; margin: 0 0 10px; font-size: 0.95rem; }
     label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
     .optional { color: #666; }
     input {
@@ -81,8 +81,15 @@
       padding: 16px;
     }
     #previewPlayer audio { width: 100%; margin-top: 8px; }
-    .hint { font-size: 0.8rem; color: #666; margin-top: 24px; }
-    .hint a { color: #1DB954; text-decoration: none; }
+    /* Notes under the subtitle: where to go next, the login tip and the link formats */
+    .top-notes { font-size: 0.8rem; color: #9a9a9a; margin: 0 0 24px; }
+    .top-notes p { margin: 0 0 6px; }
+    .top-notes a { color: #1DB954; text-decoration: none; font-weight: 600; white-space: nowrap; }
+    .top-notes .sep { margin: 0 6px; color: #555; }
+    .top-notes code { font-size: 0.95em; color: #ddd; }
+    .formats { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 8px 0 0; }
+    .formats dt { color: #b3b3b3; }
+    .formats dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
     code { background: #282828; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
 
     /* Playlist: one song per row */
@@ -138,15 +145,34 @@
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap">
+  <!-- The hieroglyph font loads without holding up the page (media="print" until it arrives) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Egyptian+Hieroglyphs&display=swap" media="print" onload="this.media='all'">
+  <script>
+    // Spotify's player script calls this once, as soon as it loads, which can be before the
+    // page's own script has run. Keep the player API until the page picks it up.
+    window.onSpotifyIframeApiReady = api => { window.spotifyIframeApi = api; };
+  </script>
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
   <h1>Spotiky</h1>
   <p class="subtitle" id="subtitle">Play any Spotify track from a specific timestamp</p>
 
+  <div class="top-notes" id="trackHint">
+    <p><a href="/playlist">Make a playlist →</a><span class="sep">·</span>Full songs play when you're logged into Spotify in this browser; otherwise you'll hear a short preview.</p>
+    <dl class="formats">
+      <dt>Share link</dt><dd><code>open.spotiky.com/track/ID$83</code></dd>
+      <dt>Clip</dt><dd><code>open.spotiky.com/track/ID$1:23-1:45</code></dd>
+      <dt>Code</dt><dd><code>spotiky.com/夜光1:23-1:45</code></dd>
+    </dl>
+  </div>
+  <div class="top-notes" id="playlistHint" hidden>
+    <p><a href="/">← Play a single song</a><span class="sep">·</span>Playlists play full songs and exact clips when you're logged into Spotify in this browser.</p>
+    <p>The link is the playlist: <code>spotiky.com/playlist/ID1$83,夜光1:23-1:45,ID3</code></p>
+  </div>
+
   <section id="trackView">
-    <label for="link">Spotify track link or ID</label>
+    <label for="link">Song link or code</label>
     <input id="link" placeholder="Spotify or Spotiky link, or a Spotiky code" autocomplete="off">
 
     <label for="time">Start time</label>
@@ -205,19 +231,6 @@
     <audio id="previewAudio" controls playsinline style="width:100%;"></audio>
   </div>
 
-  <p class="hint" id="trackHint">
-    Full tracks work best when you're logged into Spotify in this browser.<br>
-    Otherwise you'll get a short preview.<br><br>
-    Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code> or <code>$1.23</code><br>
-    Clips: <code>open.spotiky.com/track/ID$1:23-1:45</code><br>
-    Codes: <code>spotiky.com/夜光1:23-1:45</code> or <code>spotiky.com/🌃💡1:23-1:45</code><br><br>
-    <a href="/playlist">Make a playlist →</a>
-  </p>
-  <p class="hint" id="playlistHint" hidden>
-    Playlists play full songs and exact clips when you're logged into Spotify in this browser.<br>
-    The link is the playlist: <code>spotiky.com/playlist/ID1$83,夜光1:23-1:45,ID3</code><br><br>
-    <a href="/">← Play a single song</a>
-  </p>
 
   <script>
     const PREVIEW_WORKER = "https://spotiky-preview.spotikyhq.workers.dev";
@@ -1514,7 +1527,7 @@
     // A different song in the box means the open share card is out of date
     document.getElementById('link').addEventListener('input', () => { if (share) closeShare(); });
 
-    window.onSpotifyIframeApiReady = (IFrameAPI) => {
+    function startPlayer(IFrameAPI) {
       const element = document.getElementById('embed');
       IFrameAPI.createController(element, {
         width: '100%',
@@ -1538,7 +1551,7 @@
           action();
         }
       });
-    };
+    }
 
     if (view === 'playlist') {
       initPlaylistView();
@@ -1547,6 +1560,10 @@
       window.addEventListener('hashchange', readUrlAndPlay);
       window.addEventListener('popstate', readUrlAndPlay);
     }
+
+    // Connect to Spotify's player whether its script finished before this one or finishes later
+    if (window.spotifyIframeApi) startPlayer(window.spotifyIframeApi);
+    else window.onSpotifyIframeApiReady = startPlayer;
   </script>
 </body>
 </html>
