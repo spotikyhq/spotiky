@@ -28,7 +28,7 @@
 //   shape:<code>     a Chinese code with look-alike characters, so 白光 blocks 自光
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
-const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/data/zh-words.json";
+const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const SCRIPTS = ["zh", "eg", "em"];
 const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}$/u;
