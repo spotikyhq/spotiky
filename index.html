@@ -13,6 +13,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <style>
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       max-width: 520px;
@@ -24,7 +25,8 @@
     }
     h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; }
     .subtitle { color: #b3b3b3; margin: 0 0 28px; font-size: 0.95rem; }
-    label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
+    label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
+    .optional { color: #666; }
     input {
       width: 100%;
       padding: 14px 16px;
@@ -52,6 +54,10 @@
     button:hover { background: #1ed760; }
     button.secondary { background: #282828; margin-top: 10px; }
     button.secondary:hover { background: #3e3e3e; }
+    button.small { padding: 9px; margin-top: 0; font-size: 0.85rem; font-weight: 500; background: #282828; }
+    button.small:hover { background: #3e3e3e; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .marks { margin: -6px 0 8px; }
     #status {
       margin-top: 18px;
       color: #b3b3b3;
@@ -73,24 +79,78 @@
     }
     #previewPlayer audio { width: 100%; margin-top: 8px; }
     .hint { font-size: 0.8rem; color: #666; margin-top: 24px; }
+    .hint a { color: #1DB954; text-decoration: none; }
     code { background: #282828; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+
+    /* Playlist: one song per row */
+    .row { display: grid; grid-template-columns: 22px 1fr 36px; column-gap: 8px; align-items: center; margin-bottom: 10px; }
+    .row .num { color: #b3b3b3; text-align: right; font-size: 0.85rem; font-variant-numeric: tabular-nums; cursor: pointer; user-select: none; }
+    .row input { margin: 0; padding: 12px 14px; }
+    .row .remove { width: 36px; height: 36px; margin: 0; padding: 0; background: transparent; color: #777; font-size: 1rem; font-weight: 400; }
+    .row .remove:hover { background: #282828; color: #fff; }
+    .row .info { grid-column: 2; font-size: 0.8rem; color: #b3b3b3; padding: 4px 2px 0; }
+    .row .info:empty { display: none; }
+    .row .info.bad { color: #f15e6c; }
+    .row.playing .num { color: #1DB954; font-weight: 700; }
+    .row.playing input { box-shadow: inset 0 0 0 2px #1DB954; }
+    .row-help { font-size: 0.8rem; color: #666; margin: 4px 0 8px; }
+    .notice { margin: 16px 0; background: #181818; border-radius: 12px; padding: 16px; font-size: 0.9rem; color: #b3b3b3; }
+    .notice strong { display: block; color: #fff; margin-bottom: 4px; }
+    .notice a { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: 8px; background: #1DB954; color: #fff; font-weight: 600; text-decoration: none; }
   </style>
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
   <h1>Spotiky</h1>
-  <p class="subtitle">Play any Spotify track from a specific timestamp</p>
+  <p class="subtitle" id="subtitle">Play any Spotify track from a specific timestamp</p>
 
-  <label for="link">Spotify track link or ID</label>
-  <input id="link" placeholder="https://open.spotify.com/track/… or track ID" autocomplete="off">
+  <section id="trackView">
+    <label for="link">Spotify track link or ID</label>
+    <input id="link" placeholder="https://open.spotify.com/track/… or track ID" autocomplete="off">
 
-  <label for="time">Start time</label>
-  <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
+    <label for="time">Start time</label>
+    <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
 
-  <button onclick="play()">Play from timestamp</button>
-  <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
+    <label for="endTime">End time <span class="optional">(optional, plays just that part)</span></label>
+    <input id="endTime" placeholder="1:45" autocomplete="off">
+
+    <div class="pair marks" id="marks" hidden>
+      <button class="small" type="button" onclick="markTime('time')">Set start here</button>
+      <button class="small" type="button" onclick="markTime('endTime')">Set end here</button>
+    </div>
+
+    <button onclick="play()">Play from timestamp</button>
+    <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
+  </section>
+
+  <section id="playlistView" hidden>
+    <div id="spotifyPlaylistNotice" class="notice" hidden>
+      <strong>Spotify playlist links aren't supported yet</strong>
+      They're coming in a later version. For now, paste the songs' links below, or open the playlist on Spotify.
+      <br><a id="spotifyPlaylistLink" target="_blank" rel="noopener">Open on Spotify</a>
+    </div>
+
+    <div class="label">Songs</div>
+    <div id="rows"></div>
+    <p class="row-help">Paste song links one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>.</p>
+
+    <button onclick="playPlaylist(0)">Play playlist</button>
+    <div class="pair" id="plControls" hidden>
+      <button class="secondary" onclick="plStep(-1)">⏮ Previous</button>
+      <button class="secondary" onclick="plStep(1)">Next ⏭</button>
+    </div>
+    <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
+  </section>
 
   <div id="status">Waiting for player…</div>
+  <button id="replayBtn" class="secondary" hidden></button>
+
+  <div id="loginPrompt" class="notice" hidden>
+    <strong>Log in to Spotify to hear this playlist</strong>
+    Spotify only plays full songs, and your exact clips, to listeners who are logged in. After logging in, come back here and press Play playlist.
+    <br><a href="https://accounts.spotify.com/login" target="_blank" rel="noopener">Log in to Spotify</a>
+  </div>
+
   <div id="embed"></div>
 
   <div id="previewPlayer" style="display:none; margin-top:16px; background:#181818; border-radius:12px; padding:16px;">
@@ -100,24 +160,38 @@
     <audio id="previewAudio" controls playsinline style="width:100%;"></audio>
   </div>
 
-  <p class="hint">
+  <p class="hint" id="trackHint">
     Full tracks work best when you're logged into Spotify in this browser.<br>
-    Otherwise you'll get a 30-second preview.<br><br>
-    Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code> or <code>$1.23</code>
+    Otherwise you'll get a short preview.<br><br>
+    Share links: <code>open.spotiky.com/track/ID$83</code> or <code>&amp;t=1:23</code> or <code>$1.23</code><br>
+    Clips: <code>open.spotiky.com/track/ID$1:23-1:45</code><br><br>
+    <a href="/playlist">Make a playlist →</a>
+  </p>
+  <p class="hint" id="playlistHint" hidden>
+    Playlists play full songs and exact clips when you're logged into Spotify in this browser.<br>
+    The link is the playlist: <code>spotiky.com/playlist/ID1$83,ID2$1:23-1:45,ID3</code><br><br>
+    <a href="/">← Play a single song</a>
   </p>
 
   <script>
     const PREVIEW_WORKER = "https://spotiky-preview.spotikyhq.workers.dev";
+    const SHARE_BASE = "https://open.spotiky.com";   // track links mirror open.spotify.com
+    const PLAYLIST_BASE = "https://spotiky.com";     // playlist links don't need open.
+    const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : 'track';
 
     let controller = null;
-    let pendingTrack = null;
-    let pendingSeconds = 0;
+    let pendingAction = null;   // runs once the Spotify player is ready
     let fallbackTimer = null;
+    let endTimer = null;
+    let watchdog = null;
     let currentTrackId = null;
+    let clip = null;            // what we last asked the player to play (see startClip)
+    let seen = null;            // latest position report, for "Set start/end here"
 
     function parseTime(t) {
       if (!t) return 0;
-      t = String(t).trim().replace(',', '.');
+      // Accept the same prefixes share links use: $83, $1.23, t=83, &t=1:23
+      t = String(t).trim().replace(',', '.').replace(/^(?:\$|[?&]?t=)/i, '');
       if (t.includes(':')) {
         const parts = t.split(':').map(p => parseFloat(p) || 0);
         if (parts.length === 2) return Math.floor(parts[0] * 60 + parts[1]);
@@ -139,18 +213,74 @@
       return null;
     }
 
+    // 83 -> "1:23", 3723 -> "1:02:03"
     function formatTime(sec) {
-      const m = Math.floor(sec / 60);
-      const s = Math.floor(sec % 60);
-      return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+      sec = Math.max(0, Math.floor(sec));
+      const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60;
+      const s = String(sec % 60).padStart(2, '0');
+      return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
     }
 
-    function buildShareUrl(trackId, seconds) {
-      return `https://open.spotiky.com/track/${trackId}$${seconds}`;
+    function decodeSafe(s) {
+      try { return decodeURIComponent(s); } catch (e) { return s; }   // %24 -> $, %3A -> :
+    }
+
+    // A time is 83, 1:23, 1.23 or 1:02:03. A clip adds "-end": $1:23-1:45, $83-105, .83-.105
+    const TIME = String.raw`\d+(?:[.:,]\d+)*`;
+    const RANGE = String.raw`(${TIME})(?:-[$.]?(${TIME}))?`;
+    const RANGE_RE = new RegExp(String.raw`(?:\$|[?&]t=|^\.)` + RANGE, 'i');  // …$83  …&t=1:23  ID.83
+    const TRAILING_RE = new RegExp(String.raw`\.` + RANGE + String.raw`\/?$`);  // …?si=abc.83
+
+    // Reads the start (and optional end) from whatever follows a track ID
+    function parseRange(rest) {
+      const m = rest.match(RANGE_RE) || rest.match(TRAILING_RE);
+      return m ? { time: m[1], end: m[2] || null } : { time: null, end: null };
+    }
+
+    // Finds the track ID, start and optional end in a share link. Times can sit
+    // right after the ID or after Spotify's own ?si=… parameter:
+    //   /track/ID$83          /track/ID&t=1:23          /track/ID.83
+    //   /track/ID$1:23-1:45   /track/ID?si=abc$83       /track/ID?si=abc&t=1:23-1:45
+    function parseShareUrl(url) {
+      const s = decodeSafe(String(url));
+      const idMatch = s.match(/\/track\/([a-zA-Z0-9]{22})/i);
+      if (!idMatch) return null;
+      return { id: idMatch[1], ...parseRange(s.slice(idMatch.index + idMatch[0].length)) };
+    }
+
+    // End time in seconds, or null when it's missing or not after the start
+    function cleanEnd(start, end) {
+      if (end == null || end === '') return null;
+      const e = typeof end === 'number' ? end : parseTime(end);
+      return e > start ? e : null;
+    }
+
+    function buildShareUrl(trackId, seconds, end = null) {
+      return `${SHARE_BASE}/track/${trackId}$${seconds}` + (end != null ? `-${end}` : '');
     }
 
     function setStatus(msg) {
       document.getElementById('status').textContent = msg;
+    }
+
+    function copyText(text) {
+      if (!navigator.clipboard) { prompt('Copy this link:', text); return; }
+      navigator.clipboard.writeText(text).then(() => {
+        setStatus('Link copied!');
+      }).catch(() => {
+        prompt('Copy this link:', text);
+      });
+    }
+
+    function showReplay(label, onClick) {
+      const btn = document.getElementById('replayBtn');
+      btn.textContent = label;
+      btn.onclick = onClick;
+      btn.hidden = false;
+    }
+
+    function hideReplay() {
+      document.getElementById('replayBtn').hidden = true;
     }
 
     async function tryPreviewFallback(trackId) {
@@ -158,19 +288,19 @@
         setStatus('Loading preview…');
         const res = await fetch(`${PREVIEW_WORKER}/?id=${trackId}`);
         const data = await res.json();
-    
+
         if (!data.preview_url) {
           setStatus('No preview available. Tap the green ▶ in the Spotify player above.');
           return;
         }
-    
+
         const audio = document.getElementById('previewAudio');
         const box = document.getElementById('previewPlayer');
         const label = document.getElementById('previewLabel');
-    
+
         audio.src = data.preview_url;
         box.style.display = 'block';
-    
+
         // Wait for metadata so we know the real length
         audio.addEventListener('loadedmetadata', function onMeta() {
           audio.removeEventListener('loadedmetadata', onMeta);
@@ -179,10 +309,10 @@
           label.textContent = labelText;
           setStatus(labelText);
         }, { once: true });
-    
+
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
                       || (navigator.maxTouchPoints > 1);
-    
+
         if (isMobile) {
           setStatus('Tap the play button below for the preview');
         } else {
@@ -195,79 +325,232 @@
       }
     }
 
-    function play(trackId = null, seconds = null) {
+    // ---- Clips: start at one time, stop at another ----------------------------
+    // The Spotify player only reports its position every so often, so each
+    // report sets a timer for the time left in the clip.
+
+    // What a new position report means for a clip that ends at endMs:
+    //   'continue'   still before the end
+    //   'end'        reached the end, also when the page was asleep while the
+    //                song kept playing (the jump matches the time that passed)
+    //   'seekedPast' someone dragged the slider past the end, so don't stop
+    function classifyProgress(prev, pos, now, endMs) {
+      if (pos < endMs) return 'continue';
+      if (!prev) return 'end';
+      if (!prev.playing) return 'seekedPast';
+      return (pos - prev.pos) - (now - prev.at) > 2000 ? 'seekedPast' : 'end';
+    }
+
+    // Logged-out listeners only get a preview, usually 30 seconds, that can't start
+    // at our time. Real songs can be that short too, so a short song only counts
+    // as a preview at a typical preview length, or when we asked for a start past it.
+    function looksLikePreview(dur, start) {
+      return dur > 0 && dur <= 30500 && (dur >= 29000 || start * 1000 >= dur);
+    }
+
+    // Where a clip stops: its end time, or for playlists the end of the song
+    function clipEndMs(c, dur) {
+      const endMs = c.end != null ? c.end * 1000 : (c.playlist ? dur : 0);
+      return endMs && dur ? Math.min(endMs, dur) : endMs;
+    }
+
+    function startClip(trackId, start, end, opts = {}) {
+      clearTimeout(fallbackTimer);
+      clearTimeout(endTimer);
+      clearTimeout(watchdog);
+      hideReplay();
+      const c = { id: trackId, uri: `spotify:track:${trackId}`, start, end,
+                  armed: false, started: false, done: false, prev: null, ...opts };
+      clip = c;
+      setStatus(`${c.label ? c.label + ' · ' : ''}Loading track at ${formatTime(start)}…`);
+
+      if (seen && seen.playing) controller.pause();   // cut the current song first
+
+      // Load the track with the desired start time
+      controller.loadEntity(c.uri, false, start);
+
+      // Give the player a moment to load, then play ONCE
+      // (several quick play() calls make it restart from 0)
+      setTimeout(() => {
+        if (clip !== c) return;   // something newer started meanwhile
+        controller.play();
+        c.armed = true;
+        if (c.onPlay) c.onPlay(c);
+      }, 900);
+    }
+
+    function finishClip() {
+      const c = clip;
+      if (!c || c.done) return;
+      c.done = true;
+      c.doneAt = performance.now();
+      clearTimeout(endTimer);
+      if (c.onEnd) c.onEnd(c);
+    }
+
+    function showProgress(c, pos, dur, playing) {
+      if (!playing || pos <= 500) return;
+      const prefix = c.label ? c.label + ' · ' : '';
+      const now = formatTime(pos / 1000);
+      const total = dur ? formatTime(dur / 1000) : null;
+      if (c.end != null) {        // clip: now / clip end (song length)
+        const end = formatTime(dur ? Math.min(c.end, dur / 1000) : c.end);
+        setStatus(`${prefix}Playing ${now} / ${end}` + (total ? ` (${total})` : ''));
+      } else if (dur > 60000) {   // real full track
+        setStatus(`${prefix}Playing ${now} / ${total}`);
+      } else {
+        setStatus(`${prefix}Playing from ${now}`);
+      }
+    }
+
+    function onPreview(c, pos) {
+      if (c.playlist) {           // playlists ask the listener to log in instead
+        c.done = true;
+        c.doneAt = performance.now();
+        controller.pause();
+        stopPlaylist();
+        document.getElementById('loginPrompt').hidden = false;
+        setStatus('Log in to Spotify to play this playlist');
+      } else if (c.end != null) {
+        setStatus('Spotify is only playing a preview. Log in to Spotify in this browser to hear the exact clip.');
+      } else {
+        setStatus(`Playing from ${formatTime(pos / 1000)}`);
+      }
+    }
+
+    function onPlaybackUpdate(d) {
+      const t = performance.now();
+      const pos = d.position || 0, dur = d.duration || 0, playing = !d.isPaused;
+      seen = { pos, at: t, playing };
+      if (playing && view === 'track') document.getElementById('marks').hidden = false;
+
+      if (playing && pos > 500) {   // the embed is really playing
+        clearTimeout(fallbackTimer);
+        clearTimeout(watchdog);
+        document.getElementById('previewPlayer').style.display = 'none';
+      }
+
+      const c = clip;
+      if (!c || !c.armed) return;
+      if (d.playingURI && d.playingURI !== c.uri) return;   // a late report about the previous song
+      if (c.done) {               // the clip is over; if they press ▶ again, just show the time
+        if (!c.preview && t - c.doneAt > 1500) showProgress({}, pos, dur, playing);
+        return;
+      }
+
+      if (playing && !c.started) {
+        c.started = true;
+        if (looksLikePreview(dur, c.start)) c.preview = true;   // logged out: only a short preview plays
+        else if (c.playlist) {
+          pl.everPlayed = true;
+          document.getElementById('loginPrompt').hidden = true;
+        }
+      }
+      if (c.preview) return onPreview(c, pos);
+      if (playing && d.isBuffering) { clearTimeout(endTimer); return; }   // not moving right now
+
+      const prev = c.prev;
+      c.prev = { pos, at: t, playing };
+      let endMs = clipEndMs(c, dur);
+      if (endMs) {
+        if (!playing) {
+          clearTimeout(endTimer);
+          // Paused within a couple of seconds of the end: the song ran out by itself
+          if (prev && prev.playing && prev.pos + (t - prev.at) >= endMs - 2500) return finishClip();
+          if (prev && !prev.playing && pos >= endMs) c.end = null;   // moved past the end while paused
+          return;
+        }
+        const verdict = classifyProgress(prev, pos, t, endMs);
+        if (verdict === 'end') return finishClip();
+        if (verdict === 'seekedPast') { c.end = null; endMs = clipEndMs(c, dur); }
+        clearTimeout(endTimer);
+        if (endMs) endTimer = setTimeout(finishClip, Math.max(0, endMs - pos));
+      }
+      showProgress(c, pos, dur, playing);
+    }
+
+    // ---- Single track page ------------------------------------------------------
+    function play(trackId = null, seconds = null, end = null) {
       if (!trackId) {
         trackId = extractTrackId(document.getElementById('link').value);
         seconds = parseTime(document.getElementById('time').value);
+        end = document.getElementById('endTime').value;
       }
       if (!trackId) {
         setStatus('Please enter a valid Spotify track link or ID');
         return;
       }
-    
+      end = cleanEnd(seconds, end);
+
       currentTrackId = trackId;
       document.getElementById('previewPlayer').style.display = 'none';
       document.getElementById('previewAudio').src = '';
-    
+
       // Clean shareable URL
-      history.replaceState(null, '', `/track/${trackId}$${seconds}`);
-    
+      history.replaceState(null, '', `/track/${trackId}$${seconds}` + (end != null ? `-${end}` : ''));
+
       if (!controller) {
-        pendingTrack = trackId;
-        pendingSeconds = seconds;
+        pendingAction = () => play(trackId, seconds, end);
         setStatus('Player loading… will start automatically');
         return;
       }
-    
-      setStatus(`Loading track at ${formatTime(seconds)}…`);
-    
-      // Clear any previous fallback timer
-      clearTimeout(fallbackTimer);
-    
-      // Load the track with the desired start time
-      controller.loadEntity(`spotify:track:${trackId}`, false, seconds);
-    
-      // Give the player a moment to load, then play ONCE
-      setTimeout(() => {
-        controller.play();
-        setStatus(`Playing from ${formatTime(seconds)}`);
-    
-        // Only start the preview fallback if nothing is playing after a few seconds
-        fallbackTimer = setTimeout(() => {
-          tryPreviewFallback(trackId);
-        }, 3500);
-      }, 900);
+
+      startClip(trackId, seconds, end, {
+        onEnd: end != null ? clipEnded : null,
+        onPlay: () => {
+          setStatus(`Playing from ${formatTime(seconds)}`);
+          // Only start the preview fallback if nothing is playing after a few seconds
+          fallbackTimer = setTimeout(() => {
+            tryPreviewFallback(trackId);
+          }, 3500);
+        },
+      });
+    }
+
+    function clipEnded(c) {
+      controller.pause();
+      setStatus(`Clip ended (${formatTime(c.start)}–${formatTime(c.end)})`);
+      showReplay('↺ Replay clip', () => play(c.id, c.start, c.end));
+    }
+
+    // "Set start here" / "Set end here": use where the song is right now
+    function markTime(field) {
+      if (!seen) {
+        setStatus('Play the song first, then tap this at the right moment');
+        return;
+      }
+      const ms = seen.pos + (seen.playing ? performance.now() - seen.at : 0);
+      const value = formatTime(ms / 1000);
+      document.getElementById(field).value = value;
+      setStatus(`${field === 'time' ? 'Start' : 'End'} set to ${value}`);
     }
 
     function copyShareLink() {
       const trackId = extractTrackId(document.getElementById('link').value);
       const seconds = parseTime(document.getElementById('time').value);
+      const end = cleanEnd(seconds, document.getElementById('endTime').value);
       if (!trackId) {
         setStatus('Enter a track first');
         return;
       }
-      const url = buildShareUrl(trackId, seconds);
-      navigator.clipboard.writeText(url).then(() => {
-        setStatus('Link copied!');
-      }).catch(() => {
-        prompt('Copy this link:', url);
-      });
+      copyText(buildShareUrl(trackId, seconds, end));
+    }
+
+    function fillTrackInputs(link, time, end) {
+      document.getElementById('link').value = link;
+      document.getElementById('time').value = time;
+      document.getElementById('endTime').value = end || '';
     }
 
     function readUrlAndPlay() {
-      const path = window.location.pathname + window.location.search + window.location.hash;
-      const full = window.location.href;
-
-      // Preferred: /track/ID$83  or  /track/ID&t=83  or  /track/ID.83
-      let m = path.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i)
-           || full.match(/\/track\/([a-zA-Z0-9]{22})(?:\$|&t=|\.)([^&#\s]+)/i);
-
-      if (m) {
-        const id = m[1];
-        const sec = parseTime(m[2]);
-        document.getElementById('link').value = id;
-        document.getElementById('time').value = m[2];
-        play(id, sec);
+      // Share links: /track/ID plus times (no time = play from the start)
+      const share = parseShareUrl(window.location.href);
+      if (share) {
+        const time = share.time || '0';
+        const start = parseTime(time);
+        const end = cleanEnd(start, share.end);
+        fillTrackInputs(share.id, time, end != null ? share.end : '');
+        play(share.id, start, end);
         return;
       }
 
@@ -277,8 +560,7 @@
       if (hashMatch) {
         const id = hashMatch[1];
         const sec = parseInt(hashMatch[2], 10);
-        document.getElementById('link').value = id;
-        document.getElementById('time').value = sec;
+        fillTrackInputs(id, sec, '');
         play(id, sec);
         return;
       }
@@ -287,11 +569,289 @@
       const params = new URLSearchParams(window.location.search);
       if (params.get('track')) {
         const id = extractTrackId(params.get('track'));
-        const sec = parseTime(params.get('t') || '0');
-        document.getElementById('link').value = params.get('track');
-        document.getElementById('time').value = params.get('t') || '0';
-        if (id) play(id, sec);
+        const r = parseRange('&t=' + (params.get('t') || '0'));
+        const time = r.time || '0';
+        const start = parseTime(time);
+        const end = cleanEnd(start, r.end);
+        fillTrackInputs(params.get('track'), time, end != null ? r.end : '');
+        if (id) play(id, start, end);
       }
+    }
+
+    // ---- Playlists --------------------------------------------------------------
+    // The link is the playlist: /playlist/ID1$83,ID2$83-105,ID3 (times in seconds).
+    // A lone bare ID is kept for real Spotify playlist links (a later version).
+    const rowsEl = document.getElementById('rows');
+    let pl = { entries: [], index: -1, active: false, everPlayed: false };
+
+    // Split pasted text into links: commas, spaces or new lines between them.
+    // A pasted Spotiky playlist link turns into its songs.
+    function splitLinks(text) {
+      const out = [];
+      for (const token of decodeSafe(String(text)).split(/\s+/)) {
+        if (!token) continue;
+        const pm = token.match(/^(.*?\/playlist\/)(.*)$/i);
+        if (pm && !/spotify\.com/i.test(pm[1]) && !/^[a-zA-Z0-9]{22}\/?(?:[?#].*)?$/.test(pm[2])) {
+          out.push(...pm[2].replace(/[?#].*$/, '').split(',').filter(Boolean));
+        } else if (pm) {
+          out.push(token);      // a Spotify playlist link: flagged as not supported yet
+        } else {
+          out.push(...token.split(',').filter(Boolean));
+        }
+      }
+      return out;
+    }
+
+    // One song: any Spotify or Spotiky song link, /track/ID…, or a bare ID, with optional times
+    function parseItem(text) {
+      const s = decodeSafe(String(text).trim());
+      if (!s) return null;
+      if (/\/playlist\/|^spotify:playlist:/i.test(s)) {
+        return { error: "That's a Spotify playlist link. Those are coming in a later version, so paste its songs' links for now." };
+      }
+      if (/\/(?:album|artist|episode|show)\/|^spotify:(?:album|artist|episode|show):/i.test(s)) {
+        return { error: 'Only song links work here' };
+      }
+      let m = s.match(/track[/:]([a-zA-Z0-9]{22})/i);
+      let rest;
+      if (m) rest = s.slice(m.index + m[0].length);
+      else if ((m = s.match(/^([a-zA-Z0-9]{22})/))) rest = s.slice(22);
+      else return { error: 'Not a Spotify song link' };
+      const r = parseRange(rest);
+      const start = r.time ? parseTime(r.time) : 0;
+      return { id: m[1], start, end: cleanEnd(start, r.end) };
+    }
+
+    function itemToken(it) {
+      if (!it.start && it.end == null) return it.id;
+      return `${it.id}$${it.start}` + (it.end != null ? `-${it.end}` : '');
+    }
+
+    function playlistPath(items) {
+      if (!items.length) return '/playlist';
+      const tokens = items.map(itemToken);
+      if (tokens.length === 1 && tokens[0] === items[0].id) tokens[0] += '$0';   // a lone bare ID means a Spotify playlist
+      return '/playlist/' + tokens.join(',');
+    }
+
+    function rangeLabel(it) {
+      if (it.end != null) return `${formatTime(it.start)}–${formatTime(it.end)}`;
+      return it.start ? `from ${formatTime(it.start)}` : 'whole song';
+    }
+
+    // Song names come from the preview Worker; at most 3 lookups at a time
+    const nameCache = new Map();
+    const nameQueue = [];
+    let nameLookups = 0;
+    function trackName(id) {
+      if (!nameCache.has(id)) {
+        nameCache.set(id, new Promise(resolve => {
+          const run = () => {
+            nameLookups++;
+            fetch(`${PREVIEW_WORKER}/?id=${id}`)
+              .then(r => r.json())
+              .then(data => resolve(data.name || null), () => resolve(null))
+              .finally(() => {
+                nameLookups--;
+                if (nameQueue.length) nameQueue.shift()();
+              });
+          };
+          if (nameLookups < 3) run(); else nameQueue.push(run);
+        }));
+      }
+      return nameCache.get(id);
+    }
+
+    function addRow(value = '', after = null, focus = false) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<span class="num" title="Play from this song"></span>'
+        + '<input autocomplete="off" enterkeyhint="next" placeholder="Paste a Spotify or Spotiky song link">'
+        + '<button class="remove" type="button" title="Remove" aria-label="Remove song">✕</button>'
+        + '<div class="info"></div>';
+      const input = row.querySelector('input');
+      input.value = value;
+      input.addEventListener('paste', onRowPaste);
+      input.addEventListener('input', () => { refreshRow(row); onRowsChanged(); });
+      input.addEventListener('keydown', onRowKey);
+      row.querySelector('.remove').addEventListener('click', () => removeRow(row));
+      row.querySelector('.num').addEventListener('click', () => playFromRow(row));
+      rowsEl.insertBefore(row, after ? after.nextSibling : null);
+      refreshRow(row);
+      if (focus) input.focus();
+      return row;
+    }
+
+    function refreshRow(row) {
+      const info = row.querySelector('.info');
+      const item = parseItem(row.querySelector('input').value);
+      row.item = item && item.id ? item : null;
+      info.classList.toggle('bad', !!(item && item.error));
+      if (!item) { info.textContent = ''; return; }
+      if (item.error) { info.textContent = item.error; return; }
+      info.textContent = rangeLabel(item);
+      trackName(item.id).then(name => {
+        if (name && row.item && row.item.id === item.id) info.textContent = `${name} · ${rangeLabel(row.item)}`;
+      });
+    }
+
+    // Numbers, and the address bar, which is always the share link
+    function onRowsChanged() {
+      let n = 0;
+      for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item ? ++n : '';
+      history.replaceState(null, '', playlistPath(currentItems()));
+    }
+
+    function currentItems() {
+      return [...rowsEl.children].map(r => r.item).filter(Boolean);
+    }
+
+    // Go to the empty row below, adding one if needed
+    function nextEmptyRow(row) {
+      let next = row.nextElementSibling;
+      if (!next || next.querySelector('input').value.trim()) next = addRow('', row);
+      next.querySelector('input').focus();
+      return next;
+    }
+
+    function onRowPaste(e) {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      const pieces = splitLinks(text);
+      const input = e.target, row = input.closest('.row');
+      if (pieces.length <= 1) {
+        // One link: let it paste normally, then open a fresh row for the next one
+        setTimeout(() => { if (row.item) nextEmptyRow(row); }, 0);
+        return;
+      }
+      e.preventDefault();
+      let last = row;
+      if (!input.value.trim()) {
+        input.value = pieces.shift();
+        refreshRow(row);
+      }
+      for (const p of pieces) last = addRow(p, last);
+      nextEmptyRow(last);
+      onRowsChanged();
+    }
+
+    function onRowKey(e) {
+      const row = e.target.closest('.row');
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.target.value.trim()) nextEmptyRow(row);
+      } else if (e.key === 'Backspace' && !e.target.value && rowsEl.children.length > 1) {
+        e.preventDefault();
+        const to = row.previousElementSibling || row.nextElementSibling;
+        removeRow(row);
+        const input = to.querySelector('input');
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }
+
+    function removeRow(row) {
+      row.remove();
+      if (!rowsEl.children.length) addRow('');
+      onRowsChanged();
+    }
+
+    function copyPlaylistLink() {
+      const items = currentItems();
+      if (!items.length) {
+        setStatus('Add at least one song first');
+        return;
+      }
+      copyText(PLAYLIST_BASE + playlistPath(items));
+    }
+
+    function markPlaying(row) {
+      for (const r of rowsEl.children) r.classList.toggle('playing', r === row);
+    }
+
+    function playPlaylist(from = 0) {
+      const entries = [...rowsEl.children].filter(r => r.item).map(r => ({ row: r, item: r.item }));
+      if (!entries.length) {
+        setStatus('Add at least one song link first');
+        return;
+      }
+      document.getElementById('loginPrompt').hidden = true;
+      pl = { entries, index: -1, active: true, everPlayed: false };
+      if (!controller) {
+        pendingAction = () => playEntry(from);
+        setStatus('Player loading… will start automatically');
+        return;
+      }
+      playEntry(from);
+    }
+
+    function playFromRow(row) {
+      const i = [...rowsEl.children].filter(r => r.item).indexOf(row);
+      if (i >= 0) playPlaylist(i);
+    }
+
+    function playEntry(i) {
+      if (!pl.active) return;
+      const n = pl.entries.length;
+      if (i >= n) return finishPlaylist();
+      pl.index = Math.max(0, i);
+      const { row, item } = pl.entries[pl.index];
+      markPlaying(row);
+      document.getElementById('plControls').hidden = false;
+      startClip(item.id, item.start, item.end, {
+        playlist: true,
+        label: `Song ${pl.index + 1} of ${n}`,
+        onEnd: () => playEntry(pl.index + 1),
+        onPlay: (c) => { watchdog = setTimeout(() => stalled(c), 6000); },
+      });
+    }
+
+    // Nothing played a few seconds after pressing play
+    function stalled(c) {
+      if (clip !== c || c.started) return;
+      if (!pl.everPlayed) {
+        document.getElementById('loginPrompt').hidden = false;
+        setStatus("Couldn't start the playlist. Tap ▶ in the Spotify player, or log in to Spotify first.");
+      } else {
+        setStatus(`${c.label} · This song didn't start. Tap ▶ in the Spotify player or press Next.`);
+      }
+    }
+
+    function plStep(delta) {
+      if (pl.active) playEntry(Math.max(0, pl.index + delta));
+    }
+
+    function stopPlaylist() {
+      pl.active = false;
+      markPlaying(null);
+      document.getElementById('plControls').hidden = true;
+    }
+
+    function finishPlaylist() {
+      if (seen && seen.playing) controller.pause();
+      stopPlaylist();
+      setStatus('Playlist finished');
+      showReplay('↺ Replay playlist', () => playPlaylist(0));
+    }
+
+    function initPlaylistView() {
+      document.getElementById('trackView').hidden = true;
+      document.getElementById('trackHint').hidden = true;
+      document.getElementById('playlistView').hidden = false;
+      document.getElementById('playlistHint').hidden = false;
+      document.getElementById('subtitle').textContent = 'Play a list of songs and clips, one after another';
+      document.title = 'Spotiky – Playlist';
+
+      const list = decodeSafe(location.pathname).replace(/^\/playlist\/?/i, '').replace(/\/+$/, '');
+      if (/^[a-zA-Z0-9]{22}$/.test(list)) {
+        // A real Spotify playlist ID (f→k swap): supported in a later version
+        document.getElementById('spotifyPlaylistLink').href = `https://open.spotify.com/playlist/${list}`;
+        document.getElementById('spotifyPlaylistNotice').hidden = false;
+        addRow('');
+        return;
+      }
+      for (const piece of splitLinks(list)) addRow(piece);
+      addRow('');   // an empty row, ready for pasting
+      onRowsChanged();
     }
 
     window.onSpotifyIframeApiReady = (IFrameAPI) => {
@@ -302,35 +862,28 @@
         theme: 'dark'
       }, (c) => {
         controller = c;
+        c.addListener('playback_update', (e) => onPlaybackUpdate(e.data || {}));
 
-        // Cancel fallback if the embed actually starts playing
-        c.addListener('playback_update', (e) => {
-          if (e.data && !e.data.isPaused && e.data.position > 500) {
-            clearTimeout(fallbackTimer);
-            document.getElementById('previewPlayer').style.display = 'none';
-        
-            const pos = Math.floor(e.data.position / 1000);
-            const dur = e.data.duration ? Math.floor(e.data.duration / 1000) : null;
-        
-            if (dur && dur > 60) {          // real full track
-              setStatus(`Playing ${formatTime(pos)} / ${formatTime(dur)}`);
-            } else {
-              setStatus(`Playing from ${formatTime(pos)}`);
-            }
-          }
-        });
-
-        setStatus('Player ready – enter a track');
-        if (pendingTrack) {
-          play(pendingTrack, pendingSeconds);
-          pendingTrack = null;
+        if (view === 'playlist') {
+          setStatus(currentItems().length ? 'Player ready – press Play playlist' : 'Player ready – paste some song links');
+        } else {
+          setStatus('Player ready – enter a track');
+        }
+        if (pendingAction) {
+          const action = pendingAction;
+          pendingAction = null;
+          action();
         }
       });
     };
 
-    readUrlAndPlay();
-    window.addEventListener('hashchange', readUrlAndPlay);
-    window.addEventListener('popstate', readUrlAndPlay);
+    if (view === 'playlist') {
+      initPlaylistView();
+    } else {
+      readUrlAndPlay();
+      window.addEventListener('hashchange', readUrlAndPlay);
+      window.addEventListener('popstate', readUrlAndPlay);
+    }
   </script>
 </body>
 </html>
