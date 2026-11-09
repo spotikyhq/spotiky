@@ -1425,8 +1425,15 @@ async function sendCode(env, email, code) {
         text: `Your Spotiky sign-in code is ${code}\n\nIt works for ${CODE_MINUTES} minutes. If you didn't ask for it, you can ignore this email.`,
       }),
     });
+    if (!res.ok) {
+      // Resend's reason, for the Worker's logs (npx wrangler tail). Only the kind of error: its
+      // message can include the email address, and emails are never kept.
+      const why = await res.json().catch(() => ({}));
+      console.log(`Resend didn't send a sign-in code: ${res.status} ${why.name || ""}`.trim());
+    }
     return res.ok;
   } catch (err) {
+    console.log("Couldn't reach Resend: " + (err && err.message));
     return false;
   }
 }
