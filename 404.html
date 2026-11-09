@@ -19,19 +19,19 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", sans-serif;
       max-width: 520px;
       margin: 0 auto;
-      padding: 32px 20px;
+      padding: 24px 20px 32px;
       background: #121212;
       color: #fff;
       line-height: 1.5;
     }
-    h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; }
-    .subtitle { color: #b3b3b3; margin: 0 0 10px; font-size: 0.95rem; }
-    label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
+    h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; line-height: 1.25; }
+    .subtitle { color: #b3b3b3; margin: 0 0 8px; font-size: 0.95rem; }
+    label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 4px; }
     .optional { color: #666; }
     input {
       width: 100%;
-      padding: 14px 16px;
-      margin-bottom: 16px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
       font-size: 16px;
       border-radius: 8px;
       border: none;
@@ -43,8 +43,8 @@
     button {
       font-family: inherit;
       width: 100%;
-      padding: 14px;
-      margin-top: 8px;
+      padding: 13px;
+      margin-top: 4px;
       font-size: 16px;
       font-weight: 600;
       border: none;
@@ -60,34 +60,70 @@
     button.small { padding: 9px; margin-top: 0; font-size: 0.85rem; font-weight: 500; background: #282828; }
     button.small:hover { background: #3e3e3e; }
     .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .marks { margin: -6px 0 8px; }
+    .pair > * { min-width: 0; }
+    /* Start and end side by side; the Now buttons sit inside the boxes once a song plays */
+    .mark-box { position: relative; margin-bottom: 12px; }
+    .mark-box input { display: block; margin: 0; }
+    .mark { display: none; position: absolute; right: 6px; top: 6px; bottom: 6px; width: auto; margin: 0; padding: 0 10px;
+            font-size: 0.8rem; font-weight: 600; border-radius: 6px; background: #3a3a3a; }
+    .mark:hover { background: #4a4a4a; }
+    .times.marking .mark { display: block; }
+    .times.marking input { padding-right: 62px; }
+    .actions { margin-top: 10px; }
+    .actions button { margin-top: 0; padding-left: 8px; padding-right: 8px; }
     #status {
-      margin-top: 18px;
+      margin-top: 8px;
       color: #b3b3b3;
-      min-height: 24px;
+      min-height: 22px;
       font-size: 0.9rem;
     }
     #embed {
-      margin-top: 24px;
+      margin-top: 8px;
       border-radius: 12px;
       overflow: hidden;
       background: #181818;
     }
     #previewPlayer {
-      margin-top: 16px;
+      margin-top: 12px;
       display: none;
       background: #181818;
       border-radius: 12px;
       padding: 16px;
     }
+    #previewLabel { font-size: 0.9rem; color: #b3b3b3; margin-bottom: 8px; }
     #previewPlayer audio { width: 100%; margin-top: 8px; }
+    /* Header with the account button, the sign-in panel, and the owner's Save bar */
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 4px; }
+    .top h1 { margin: 0; }
+    .account-btn { width: auto; flex: none; margin: 0; padding: 7px 14px; font-size: 0.85rem; background: #282828; border-radius: 999px; }
+    .account-btn:hover { background: #3e3e3e; }
+    .account { margin: 4px 0 18px; font-size: 0.9rem; color: #ccc; }
+    .account p { margin: 0 0 10px; }
+    .account input { margin-bottom: 8px; }
+    .account .pair { margin-top: 8px; }
+    .account .account-msg { font-size: 0.8rem; color: #f15e6c; margin: 10px 0 0; }
+    .account .account-msg.ok { color: #1DB954; }
+    .small-note { font-size: 0.75rem; color: #8a8a8a; }
+    .my-lists ul { list-style: none; padding: 0; margin: 4px 0 12px; }
+    .my-lists li { margin: 6px 0; overflow-wrap: anywhere; }
+    .my-lists a { color: #1DB954; text-decoration: none; }
+    .owner-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #15291c; border: 1px solid #1f5a33; border-radius: 10px; padding: 8px 10px; margin: 0 0 12px; font-size: 0.85rem; color: #cfe9d6; }
+    .owner-bar button { width: auto; flex: none; }
+    .owner-bar button:disabled { opacity: 0.5; cursor: default; }
+    .share-id { font-size: 0.85rem; color: #b3b3b3; margin: -2px 0 10px; }
+    /* a playlist's emoji (names, skin tones) and English (words) labels get whole rows */
+    .share-codes.playlist > .code-card[data-script="em"], .share-codes.playlist > .code-card[data-script="en"] { grid-column: 1 / -1; }
+    .share-id code { font-size: 0.95em; color: #fff; }
+    .code-chars.en label.char { min-width: 0; padding: 4px 8px 6px; }
+    .code-chars.en .big { font-size: 17px; line-height: 2.2; }
+
     /* Notes under the subtitle: where to go next, the login tip and the link formats */
-    .top-notes { font-size: 0.8rem; color: #9a9a9a; margin: 0 0 24px; }
+    .top-notes { font-size: 0.8rem; color: #9a9a9a; margin: 0 0 16px; line-height: 1.45; }
     .top-notes p { margin: 0 0 6px; }
     .top-notes a { color: #1DB954; text-decoration: none; font-weight: 600; white-space: nowrap; }
     .top-notes .sep { margin: 0 6px; color: #555; }
     .top-notes code { font-size: 0.95em; color: #ddd; }
-    .formats { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 8px 0 0; }
+    .formats { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; margin: 6px 0 0; }
     .formats dt { color: #b3b3b3; }
     .formats dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
     code { background: #282828; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
@@ -142,6 +178,17 @@
     .code-card .copy-code { margin-top: auto; padding: 10px; font-size: 0.85rem; }
     .code-card .copy-code:disabled { opacity: 0.45; cursor: default; }
     .code-card .copy-code:disabled:hover { background: #282828; }
+    .code-card .copy-discord { width: auto; align-self: center; margin: 4px 0 -4px; padding: 4px 8px; background: none; color: #9a9a9a; font-size: 0.75rem; font-weight: 500; }
+    .code-card .copy-discord:hover { background: none; color: #fff; text-decoration: underline; }
+    .code-card .copy-discord:disabled { opacity: 0.45; cursor: default; text-decoration: none; }
+
+    /* Phones: a little less around the edges, so the player fits under Play (last, so it wins) */
+    @media (max-width: 480px) {
+      body { padding: 14px 16px 28px; }
+      h1 { font-size: 1.6rem; }
+      .top-notes { margin-bottom: 12px; }
+    }
+    @media (max-width: 380px) { .subtitle { font-size: 0.85rem; } }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -155,11 +202,15 @@
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 </head>
 <body>
-  <h1>Spotiky</h1>
+  <header class="top">
+    <h1>Spotiky</h1>
+    <button id="accountBtn" class="account-btn" type="button" onclick="toggleAccount()">Sign in</button>
+  </header>
   <p class="subtitle" id="subtitle">Play any Spotify track from a specific timestamp</p>
+  <div id="accountPanel" class="share account" hidden></div>
 
   <div class="top-notes" id="trackHint">
-    <p><a href="/playlist">Make a playlist →</a><span class="sep">·</span>Full songs play when you're logged into Spotify in this browser; otherwise you'll hear a short preview.</p>
+    <p><a href="/playlist">Make a playlist →</a><span class="sep">·</span>Log into Spotify in this browser for full songs; otherwise you'll hear a preview.</p>
     <dl class="formats">
       <dt>Share link</dt><dd><code>open.spotiky.com/track/ID$83</code></dd>
       <dt>Clip</dt><dd><code>open.spotiky.com/track/ID$1:23-1:45</code></dd>
@@ -175,20 +226,48 @@
     <label for="link">Song link or code</label>
     <input id="link" placeholder="Spotify or Spotiky link, or a Spotiky code" autocomplete="off">
 
-    <label for="time">Start time</label>
-    <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
-
-    <label for="endTime">End time <span class="optional">(optional, plays just that part)</span></label>
-    <input id="endTime" placeholder="1:45" autocomplete="off">
-
-    <div class="pair marks" id="marks" hidden>
-      <button class="small" type="button" onclick="markTime('time')">Set start here</button>
-      <button class="small" type="button" onclick="markTime('endTime')">Set end here</button>
+    <!-- Start and end side by side. Once a song plays, each gets a Now button: "the song is here" -->
+    <div class="pair times" id="times">
+      <div>
+        <label for="time">Start time</label>
+        <div class="mark-box">
+          <input id="time" placeholder="1:23 · $83" autocomplete="off">
+          <button class="mark" type="button" onclick="markTime('time')" aria-label="Set start to now" title="Set the start to where the song is now">Now</button>
+        </div>
+      </div>
+      <div>
+        <label for="endTime">End time <span class="optional">(optional)</span></label>
+        <div class="mark-box">
+          <input id="endTime" placeholder="1:45" autocomplete="off">
+          <button class="mark" type="button" onclick="markTime('endTime')" aria-label="Set end to now" title="Set the end to where the song is now">Now</button>
+        </div>
+      </div>
     </div>
 
     <button onclick="play()">Play from timestamp</button>
-    <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
-    <button class="secondary" onclick="shareTrack()">Share as a code</button>
+    <!-- The player sits right under Play, so it's on screen when the song starts. On the playlist
+         page this whole block moves under that page's Play buttons. -->
+    <div id="playerBlock">
+      <div id="status">Waiting for player…</div>
+      <button id="replayBtn" class="secondary" hidden></button>
+
+      <div id="loginPrompt" class="notice" hidden>
+        <strong>Log in to Spotify to hear this playlist</strong>
+        Spotify only plays full songs, and your exact clips, to listeners who are logged in. After logging in, come back here and press Play playlist.
+        <br><a href="https://accounts.spotify.com/login" target="_blank" rel="noopener">Log in to Spotify</a>
+      </div>
+
+      <div id="embed"></div>
+
+      <div id="previewPlayer">
+        <div id="previewLabel">Preview</div>
+        <audio id="previewAudio" controls playsinline></audio>
+      </div>
+    </div>
+    <div class="pair actions">
+      <button class="secondary" onclick="copyShareLink()">Copy link</button>
+      <button class="secondary" onclick="shareTrack()">Share as a code</button>
+    </div>
   </section>
 
   <section id="playlistView" hidden>
@@ -198,6 +277,10 @@
       <br><a id="spotifyPlaylistLink" target="_blank" rel="noopener">Open on Spotify</a>
     </div>
 
+    <div id="ownerBar" class="owner-bar" hidden>
+      <span>Your playlist. Saving keeps its links the same.</span>
+      <button id="saveListBtn" class="small" type="button" onclick="saveOwnedPlaylist()" disabled>Save changes</button>
+    </div>
     <div class="label">Songs</div>
     <div id="rows"></div>
     <p class="row-help">Paste song links or Spotiky codes, one at a time or several at once. Add a start like <code>$1:23</code> or a clip like <code>$1:23-1:45</code>. After a code, the time can go right after it: <code>夜光1:23-1:45</code> or <code>🌃💡1:23-1:45</code>.</p>
@@ -207,29 +290,13 @@
       <button class="secondary" onclick="plStep(-1)">⏮ Previous</button>
       <button class="secondary" onclick="plStep(1)">Next ⏭</button>
     </div>
-    <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
-    <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
+    <div class="pair actions">
+      <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
+      <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
+    </div>
   </section>
 
   <div id="sharePanel" class="share" hidden></div>
-
-  <div id="status">Waiting for player…</div>
-  <button id="replayBtn" class="secondary" hidden></button>
-
-  <div id="loginPrompt" class="notice" hidden>
-    <strong>Log in to Spotify to hear this playlist</strong>
-    Spotify only plays full songs, and your exact clips, to listeners who are logged in. After logging in, come back here and press Play playlist.
-    <br><a href="https://accounts.spotify.com/login" target="_blank" rel="noopener">Log in to Spotify</a>
-  </div>
-
-  <div id="embed"></div>
-
-  <div id="previewPlayer" style="display:none; margin-top:16px; background:#181818; border-radius:12px; padding:16px;">
-    <div id="previewLabel" style="font-size:0.9rem; color:#b3b3b3; margin-bottom:8px;">
-      Preview
-    </div>
-    <audio id="previewAudio" controls playsinline style="width:100%;"></audio>
-  </div>
 
 
   <script>
@@ -237,6 +304,8 @@
     const SHARE_BASE = "https://open.spotiky.com";   // track links mirror open.spotify.com
     const SITE_BASE = "https://spotiky.com";         // playlist and code links don't need open.
     const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : 'track';
+    // The player goes under the page's own Play buttons: on the playlist page, under Play playlist
+    if (view === 'playlist') document.getElementById('plControls').after(document.getElementById('playerBlock'));
 
     let controller = null;
     let pendingAction = null;   // runs once the Spotify player is ready
@@ -313,6 +382,17 @@
       const s = decodeSafe(String(text).trim());
       const m = s.match(/track[/:=]([a-zA-Z0-9]{22})/i) || s.match(/^([a-zA-Z0-9]{22})(?![a-zA-Z0-9])/);
       return m ? { id: m[1], ...parseRange(s.slice(m.index + m[0].length)) } : null;
+    }
+
+    // A playlist's short link: an ID made of letters and digits that can't be mixed up, always
+    // with a digit, then one of its labels:  5mh夜歌   5mh𓇰𓇼   5mh🌙🎧   5mh-night-drive   or just 5mh
+    // label is what follows the ID as written, hyphen included: "夜歌" or "-night-drive"
+    const PLAYLIST_LINK_RE = /^(?=[0-9a-hjkmnp-tv-z]{0,12}[0-9])([0-9a-hjkmnp-tv-z]{3,13})(?=$|-|[^\x00-\x7F])(.*)$/iu;
+    function parsePlaylistLink(text) {
+      const s = decodeSafe(String(text).trim());
+      if (/spotify/i.test(s)) return null;
+      const m = s.replace(/^.*?\/playlist\//i, '').replace(/\/+$/, '').match(PLAYLIST_LINK_RE);
+      return m ? { id: m[1].toLowerCase(), label: m[2] } : null;
     }
 
     // The songs part of a Spotiky playlist link (spotiky.com/playlist/ID1$83,夜光), or null.
@@ -403,7 +483,6 @@
 
     function cleanCodeRecord(r) {
       if (r && r.type === 'track' && /^[a-zA-Z0-9]{22}$/.test(r.id)) return { type: 'track', id: r.id };
-      if (r && r.type === 'playlist' && typeof r.items === 'string' && r.items.length <= 4000) return { type: 'playlist', items: r.items };
       return null;
     }
 
@@ -422,12 +501,39 @@
       document.getElementById('status').textContent = msg;
     }
 
-    function copyText(text) {
-      if (!navigator.clipboard) { prompt('Copy this link:', text); return; }
-      navigator.clipboard.writeText(text).then(() => {
-        setStatus('Link copied!');
-      }).catch(() => {
-        prompt('Copy this link:', text);
+    // ---- Copying links ------------------------------------------------------------
+    // A copied link is plain ASCII: spotiky.com/夜光 goes out as spotiky.com/%E5%A4%9C%E5%85%89.
+    // Some apps end a link at its first emoji or Chinese character (Discord at emoji, X at
+    // both), while every app opens an ASCII link, and browsers show the characters again once
+    // it's open. Apps that keep formatting (email, docs, Slack) get the readable spotiky.com/夜光
+    // as the link's text. Code cards can also copy a Discord link, which shows the code itself.
+    const asciiLink = link => String(link).replace(/[^\x00-\x7F]+/gu, s => encodeURIComponent(s));
+    const prettyLink = link => String(link).replace(/^https?:\/\//, '');
+    // [🌙🎧](https://spotiky.com/%F0%9F…): Discord shows the code and opens the link. The text is
+    // the code alone, since Discord turns down masked links whose text is a whole address.
+    const discordLink = link => `[${prettyLink(link).replace(/^[^/]*\/(?:playlist\/|track\/)?/, '')}](${asciiLink(link)})`;
+    const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+    // Puts a link on the clipboard; resolves to whether that worked. The link can be a promise,
+    // so the copy starts inside the tap (Safari only allows it there) and fills in once ready.
+    function writeLink(link, forDiscord = false) {
+      const ready = Promise.resolve(link);
+      const text = ready.then(l => forDiscord ? discordLink(l) : asciiLink(l));
+      const plainCopy = () => text.then(t => navigator.clipboard.writeText(t)).then(() => true, () => false);
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        const parts = { 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) };
+        if (!forDiscord) {
+          parts['text/html'] = ready.then(l => new Blob([`<a href="${escapeHtml(asciiLink(l))}">${escapeHtml(prettyLink(l))}</a>`], { type: 'text/html' }));
+        }
+        return navigator.clipboard.write([new ClipboardItem(parts)]).then(() => true, plainCopy);
+      }
+      return navigator.clipboard ? plainCopy() : Promise.resolve(false);
+    }
+
+    function copyLink(link) {
+      writeLink(link).then(ok => {
+        if (ok) setStatus('Link copied!');
+        else prompt('Copy this link:', asciiLink(link));
       });
     }
 
@@ -449,7 +555,7 @@
         const data = await res.json();
 
         if (!data.preview_url) {
-          setStatus('No preview available. Tap the green ▶ in the Spotify player above.');
+          setStatus('No preview available. Tap the green ▶ in the Spotify player below.');
           return;
         }
 
@@ -480,7 +586,7 @@
           });
         }
       } catch (e) {
-        setStatus('Preview failed. Tap the green ▶ in the Spotify player above.');
+        setStatus('Preview failed. Tap the green ▶ in the Spotify player below.');
       }
     }
 
@@ -581,7 +687,7 @@
       const t = performance.now();
       const pos = d.position || 0, dur = d.duration || 0, playing = !d.isPaused;
       seen = { pos, at: t, playing };
-      if (playing && view === 'track') document.getElementById('marks').hidden = false;
+      if (playing && view === 'track') document.getElementById('times').classList.add('marking');
 
       if (playing && pos > 500) {   // the embed is really playing
         clearTimeout(fallbackTimer);
@@ -641,6 +747,7 @@
       history.replaceState(null, '', code
         ? `/${code}${codeSuffix(seconds, end)}`
         : `/track/${trackId}$${seconds}` + (end != null ? `-${end}` : ''));
+      setTimeout(revealPlayer, 300);   // after a phone's keyboard has closed
 
       if (!controller) {
         pendingAction = () => play(trackId, seconds, end, code);
@@ -661,6 +768,14 @@
       });
     }
 
+    // The player sits right under Play. On a screen too short for it, bring it into view, just
+    // far enough that all of it shows.
+    function revealPlayer() {
+      const block = document.getElementById('playerBlock');
+      const r = block.getBoundingClientRect();
+      if (r.bottom > window.innerHeight || r.top < 0) block.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     // What the link box asks for: { code, start, end }, { id, start, end }, { list } for a
     // Spotiky playlist link, or null. The link's own start and end count unless the time
     // boxes say otherwise, so a copied spotiky.com/track/ID$1:23-1:45 keeps its clip.
@@ -669,7 +784,10 @@
       const list = spotikyList(raw);
       if (list) return { list };
       const found = parseCodeText(raw) || parseTrackText(raw);
-      if (!found) return null;
+      if (!found) {
+        const short = parsePlaylistLink(raw);   // a playlist's short code on its own: 5mh夜歌, 5mh
+        return short ? { list: short.id + short.label } : null;
+      }
       const timeBox = document.getElementById('time').value.trim();
       const endBox = document.getElementById('endTime').value.trim();
       const start = parseTime(timeBox || found.time || '0');
@@ -707,10 +825,6 @@
       setStatus(`Looking up ${code}…`);
       try {
         const rec = await lookupCode(code);
-        if (rec && rec.type === 'playlist') {   // a playlist's code: open the playlist page
-          location.replace('/playlist/' + code);
-          return null;
-        }
         if (rec) return rec.id;
         setStatus(`No song has the code ${code} yet.`);
       } catch (e) {
@@ -725,7 +839,7 @@
       showReplay('↺ Replay clip', () => play(c.id, c.start, c.end, c.code));
     }
 
-    // "Set start here" / "Set end here": use where the song is right now
+    // The Now buttons in the time boxes: use where the song is right now
     function markTime(field) {
       if (!seen) {
         setStatus('Play the song first, then tap this at the right moment');
@@ -739,10 +853,10 @@
 
     function copyShareLink() {
       const want = readTrackBox();
-      if (want && want.list) return copyText(`${SITE_BASE}/playlist/${want.list}`);
+      if (want && want.list) return copyLink(`${SITE_BASE}/playlist/${want.list}`);
       if (trackBoxProblem(want)) return;
-      if (want.code) return copyText(`${SITE_BASE}/${want.code}${codeSuffix(want.start, want.end)}`);
-      copyText(buildShareUrl(want.id, want.start, want.end));
+      if (want.code) return copyLink(`${SITE_BASE}/${want.code}${codeSuffix(want.start, want.end)}`);
+      copyLink(buildShareUrl(want.id, want.start, want.end));
     }
 
     // Pasting a link that has a start or a clip puts its times in the boxes, replacing the old ones
@@ -841,6 +955,8 @@
     function parseItem(text) {
       const s = decodeSafe(String(text).trim());
       if (!s) return null;
+      const link = parsePlaylistLink(s);   // a playlist's short link: its songs come in once it's looked up
+      if (link) return { list: link.id, label: link.label, id: null, start: 0, end: null };
       if (/\/playlist\/|^spotify:playlist:/i.test(s)) {
         if (spotikyList(s)) return { error: 'Paste a Spotiky playlist link to add its songs' };   // typed out by hand
         return { error: "That's a Spotify playlist link. Those are coming in a later version, so paste its songs' links for now." };
@@ -860,6 +976,7 @@
     }
 
     function itemToken(it) {
+      if (it.list) return it.list + it.label;   // a short link still being opened
       if (it.code) return it.code + codeSuffix(it.start, it.end);
       if (!it.start && it.end == null) return it.id;
       return `${it.id}$${it.start}` + (it.end != null ? `-${it.end}` : '');
@@ -927,8 +1044,16 @@
       info.classList.toggle('bad', !!(item && item.error));
       if (!item) { info.textContent = ''; return; }
       if (item.error) { info.textContent = item.error; return; }
+      if (item.list) { lookupRowList(row, item); return; }
       if (item.code) { lookupRowCode(row, item); return; }
       showRowSong(row, item);
+    }
+
+    function failRow(row, item, text) {
+      const info = row.querySelector('.info');
+      item.missing = true;
+      info.classList.add('bad');
+      info.textContent = text;
     }
 
     function showRowSong(row, item) {
@@ -941,47 +1066,58 @@
 
     // A code row shows its song once the Worker says which song the code is
     function lookupRowCode(row, item) {
-      const info = row.querySelector('.info');
-      info.textContent = `Looking up ${item.code}…`;
-      const fail = text => {
-        item.missing = true;
-        info.classList.add('bad');
-        info.textContent = text;
-      };
+      row.querySelector('.info').textContent = `Looking up ${item.code}…`;
       item.lookup = lookupCode(item.code).then(rec => {
         if (row.item !== item) return;
-        if (rec && rec.type === 'playlist') {
-          if (row.fromList) fail("A playlist can't go inside another playlist");
-          else return expandListRow(row, item, rec);
-        } else if (rec) {
+        if (rec) {
           item.id = rec.id;
           showRowSong(row, item);
         } else {
-          fail(`No song has the code ${item.code} yet`);
+          failRow(row, item, `No song has the code ${item.code} yet`);
         }
         onRowsChanged();
       }, () => {
         if (row.item !== item) return;
-        fail("Couldn't look up this code right now");
+        failRow(row, item, "Couldn't look up this code right now");
         onRowsChanged();
       });
     }
 
-    // Numbers, and the address bar, which is always the share link
+    // A playlist's short link in a row turns into that playlist's songs (one level deep)
+    function lookupRowList(row, item) {
+      row.querySelector('.info').textContent = 'Opening playlist…';
+      item.lookup = getWorker('/playlist?id=' + item.list).then(({ ok, status, data }) => {
+        if (row.item !== item) return;
+        if (!ok) failRow(row, item, status === 404 ? 'No playlist has this link' : "Couldn't open this playlist right now");
+        else if (row.fromList) failRow(row, item, "A playlist can't go inside another playlist");
+        else return expandListRow(row, item, { ...data, label: pickLabel(data.labels, item.label) });
+        onRowsChanged();
+      });
+    }
+
+    // Numbers, the owner's Save button, and the address bar, which is always the share link
     function onRowsChanged() {
       let n = 0;
       for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item && !row.item.missing ? ++n : '';
-      const path = playlistPath(currentItems());
-      // A playlist opened from its code keeps the short link until its songs change
-      history.replaceState(null, '', listCode && path === '/playlist/' + listCode.items ? '/playlist/' + listCode.code : path);
+      history.replaceState(null, '', currentListPath());
+      showOwnerBar();
     }
 
-    // A playlist code in a row turns into that playlist's songs (one level deep)
-    let listCode = null;
+    // A saved playlist keeps its short link until its songs change
+    function currentListPath() {
+      const path = playlistPath(currentItems());
+      return listLink && !listChanged() ? `/playlist/${listLink.id}${listLink.label}` : path;
+    }
+
+    const rowsList = () => stripTones(playlistPath(currentItems().filter(it => !it.list)).replace(/^\/playlist\/?/, ''));
+    const listChanged = () => !listLink || rowsList() !== listLink.items;
+
+    // The saved playlist this page shows: { id, label, items, labels, mine }
+    let listLink = null;
     function expandListRow(row, item, rec) {
       const pieces = splitLinks(rec.items);
       const onlyRow = [...rowsEl.children].filter(r => r.item).length === 1;
-      if (onlyRow) listCode = { code: item.code, items: rec.items };
+      if (onlyRow) listLink = { id: rec.id, label: rec.label, items: rec.items, labels: rec.labels, mine: !!rec.mine };
       let last = row;
       pieces.forEach((p, i) => {
         if (i === 0) {
@@ -1068,12 +1204,22 @@
     }
 
     function copyPlaylistLink() {
-      const items = currentItems();
-      if (!items.length) {
+      if (!currentItems().length) {
         setStatus('Add at least one song first');
         return;
       }
-      copyText(SITE_BASE + playlistPath(items));
+      copyLink(SITE_BASE + currentListPath());
+    }
+
+    // Code and short-link rows still being looked up finish first (a playlist's songs can bring more codes)
+    async function waitForRowLookups() {
+      for (let round = 0; round < 3; round++) {
+        const pending = [...rowsEl.children]
+          .filter(r => r.item && (r.item.code || r.item.list) && !r.item.id && !r.item.missing && r.item.lookup)
+          .map(r => r.item.lookup);
+        if (!pending.length) break;
+        await Promise.allSettled(pending);
+      }
     }
 
     function markPlaying(row) {
@@ -1086,12 +1232,9 @@
         return;
       }
       // Codes still being looked up finish first; codes without a song are skipped
-      const pending = [...rowsEl.children]
-        .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing)
-        .map(r => r.item.lookup);
-      if (pending.length) {
+      if ([...rowsEl.children].some(r => r.item && !r.item.id && !r.item.missing)) {
         setStatus('Looking up codes…');
-        await Promise.allSettled(pending);
+        await waitForRowLookups();
       }
       const entries = [...rowsEl.children].filter(r => r.item && r.item.id).map(r => ({ row: r, item: r.item }));
       if (!entries.length) {
@@ -1174,10 +1317,68 @@
         addRow('');
         return;
       }
+      const link = parsePlaylistLink(list);
+      if (link) return openPlaylistLink(link, shareNow);
       for (const piece of splitLinks(list)) addRow(piece);
       addRow('');   // an empty row, ready for pasting
       onRowsChanged();
       if (shareNow) sharePlaylist();
+    }
+
+    // A short link: the playlist's songs come from the Worker
+    async function openPlaylistLink(link, shareNow) {
+      addRow('');
+      setStatus('Opening playlist…');
+      const { ok, status, data } = await getWorker('/playlist?id=' + link.id);
+      if (!ok) {
+        setStatus(status === 404 ? 'No playlist has this link. Check it was copied in full.' : "Couldn't open this playlist right now. Try again in a moment.");
+        return;
+      }
+      listLink = { id: data.id, label: pickLabel(data.labels, link.label), items: data.items, labels: data.labels, mine: !!data.mine };
+      rowsEl.replaceChildren();
+      for (const piece of splitLinks(data.items)) addRow(piece);
+      addRow('');
+      onRowsChanged();
+      setStatus(controller ? 'Player ready – press Play playlist' : 'Waiting for player…');
+      if (shareNow) sharePlaylist();
+    }
+
+    // Which label the address bar shows: the one in the link when it's really this playlist's
+    // (in any skin tone or capitals), otherwise its Chinese one. Returned as written after the ID.
+    function pickLabel(labels, asked) {
+      const want = stripTones(stripVS(String(asked || ''))).replace(/^-/, '').toLowerCase();
+      for (const k of LABEL_KINDS) {
+        if (labels && labels[k] && want && labels[k].code.toLowerCase() === want) return asked;
+      }
+      const k = LABEL_KINDS.find(kind => labels && labels[kind]);
+      return k ? (k === 'en' ? '-' : '') + labels[k].code : '';
+    }
+
+    // The owner of the playlist on screen can save changes to it; its links stay the same
+    function showOwnerBar() {
+      const bar = document.getElementById('ownerBar');
+      if (!bar) return;
+      bar.hidden = !(listLink && listLink.mine && session);
+      document.getElementById('saveListBtn').disabled = !listLink || !listChanged() || !currentItems().length;
+    }
+
+    async function saveOwnedPlaylist() {
+      if (!listLink || !listLink.mine) return;
+      await waitForRowLookups();
+      const items = rowsList();
+      if (!items) {
+        setStatus('Add at least one song first');
+        return;
+      }
+      const { ok, status, data } = await postWorker('/playlist/save', { edit: listLink.id, items });
+      if (!ok) {
+        if (status === 401) signedOutLocally();
+        setStatus(status === 401 ? 'Sign in again to save your playlist' : (data.error || "Couldn't save your playlist. Try again."));
+        return;
+      }
+      listLink.items = items;
+      onRowsChanged();
+      setStatus(`Saved. ${SITE_BASE.replace('https://', '')}/playlist/${listLink.id}${listLink.label} now plays these songs.`);
     }
 
     // ---- Share as a code ------------------------------------------------------------
@@ -1185,9 +1386,13 @@
     // playlist is about. Tap a character to swap it. Copying a link saves the codes,
     // first come, first served; after that they belong to this song for good. Each person or
     // hand in an emoji code can take its own skin tone; tones are only ever in the link.
-    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji' };
-    const SCRIPTS = ['zh', 'eg', 'em'];
-    let share = null;   // { target, suffix, linkFor, shared, zh, eg, em, tones, busy }
+    // Playlists get a short link instead: an ID plus a matching set of four labels (Chinese,
+    // hieroglyphs, emoji, English). Labels can repeat; the ID is what finds the playlist.
+    const SCRIPT_NAMES = { zh: 'Chinese', eg: 'Hieroglyphs', em: 'Emoji', en: 'English' };
+    const SCRIPTS = ['zh', 'eg', 'em'];             // a song's codes
+    const LABEL_KINDS = ['zh', 'eg', 'em', 'en'];   // a playlist's labels
+    let share = null;   // a song: { kinds, target, suffix, linkFor, shared, zh, eg, em, tones, busy }
+                        // a playlist: { kinds, playlist: true, items, id, idSig, saved, mine, shared, zh … en, tones, busy }
 
     function h(tag, cls, text) {
       const n = document.createElement(tag);
@@ -1196,13 +1401,10 @@
       return n;
     }
 
-    async function postWorker(path, body) {
+    // Calls to the Worker carry the sign-in, when there is one
+    async function callWorker(path, init = {}) {
       try {
-        const res = await fetch(`${PREVIEW_WORKER}${path}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        const res = await fetch(`${PREVIEW_WORKER}${path}`, { ...init, headers: { ...(init.headers || {}), ...authHeaders() } });
         let data = {};
         try { data = await res.json(); } catch (e) {}
         return { ok: res.ok, status: res.status, data: data || {} };
@@ -1210,6 +1412,8 @@
         return { ok: false, status: 0, data: {} };
       }
     }
+    const postWorker = (path, body) => callWorker(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const getWorker = path => callWorker(path);
 
     async function shareTrack() {
       const want = readTrackBox();
@@ -1220,27 +1424,39 @@
     }
 
     async function sharePlaylist() {
-      // Wait for code rows to find their songs; a playlist code's songs can bring more codes
-      for (let round = 0; round < 3; round++) {
-        const pending = [...rowsEl.children]
-          .filter(r => r.item && r.item.code && !r.item.id && !r.item.missing && r.item.lookup)
-          .map(r => r.item.lookup);
-        if (!pending.length) break;
-        await Promise.allSettled(pending);
-      }
-      const items = [...rowsEl.children].map(r => r.item).filter(it => it && it.id);
-      if (!items.length) {
+      await waitForRowLookups();
+      const items = rowsList();   // songs with other skin tones are the same playlist
+      if (!items) {
         setStatus('Add at least one song first');
         return;
       }
-      const list = stripTones(playlistPath(items).replace(/^\/playlist\//, ''));   // other skin tones, same playlist
-      openShare({ type: 'playlist', items: list }, '', code => `${SITE_BASE}/playlist/${code}`, decodeSafe(location.pathname).replace(/^\/playlist\/?/i, ''));
+      const panel = document.getElementById('sharePanel');
+      share = { kinds: LABEL_KINDS, playlist: true, items, shared: listLink ? listLink.label : '', zh: null, eg: null, em: null, en: null, tones: [], busy: false };
+      const mine = share;
+      panel.hidden = false;
+      panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding labels that fit…'));
+      const { ok, status, data } = await postWorker('/playlist/suggest', { items });
+      if (share !== mine) return;
+      if (!ok) return showShareError(status, data);
+      Object.assign(share, { id: data.id, idSig: data.idSig || null, saved: !!data.saved, mine: !!data.mine });
+      for (const k of LABEL_KINDS) share[k] = (data.labels && data.labels[k]) || null;
+      if (!share.id || !LABEL_KINDS.some(k => share[k])) return showShareError(502, {});
+      share.tones = startTones();
+      if (share.saved) adoptPlaylist(data);
+      renderShare();
+    }
+
+    // A saved playlist becomes the one this page shows: the address bar takes its short link,
+    // and its owner can keep editing it
+    function adoptPlaylist(data) {
+      listLink = { id: data.id, label: pickLabel(data.labels, listLink && listLink.id === data.id ? listLink.label : ''), items: share.items, labels: data.labels, mine: !!data.mine };
+      onRowsChanged();
     }
 
     // shared: the code as it is in the link being shared (with its skin tones), if it's a code
     async function openShare(target, suffix, linkFor, shared = '') {
       const panel = document.getElementById('sharePanel');
-      share = { target, suffix, linkFor, shared, zh: null, eg: null, em: null, tones: [], busy: false };
+      share = { kinds: SCRIPTS, target, suffix, linkFor, shared, zh: null, eg: null, em: null, tones: [], busy: false };
       const mine = share;
       panel.hidden = false;
       panel.replaceChildren(shareHead(), h('p', 'share-wait', 'Finding codes that fit…'));
@@ -1270,7 +1486,7 @@
     }
 
     function showShareError(status, data) {
-      const msg = status === 503 ? "Codes aren't switched on yet. The Spotiky Worker needs its CODES and AI bindings."
+      const msg = status === 503 ? "Codes aren't switched on yet. The Spotiky Worker needs its DB and AI bindings."
         : status === 0 ? "Couldn't reach Spotiky's code service. Check your connection and try again."
         : (data && data.error) || 'Something went wrong making codes. Try again.';
       document.getElementById('sharePanel').replaceChildren(shareHead(), h('p', 'share-error', msg));
@@ -1278,15 +1494,34 @@
 
     function renderShare() {
       if (!share) return;
-      const what = share.target.type === 'track' ? 'song' : 'playlist';
-      const cards = h('div', 'share-codes');
-      for (const script of SCRIPTS) if (share[script]) cards.append(codeCard(script));
-      let note = SCRIPTS.every(s => !share[s] || share[s].saved)
-        ? `These are this ${what}'s codes. They stay the same for everyone.`
-        : `Tap a character to swap it. Copying a link saves the new codes for this ${what}, first come, first served.`;
+      const what = share.playlist ? 'playlist' : 'song';
+      const cards = h('div', share.playlist ? 'share-codes playlist' : 'share-codes');
+      for (const script of share.kinds) if (share[script]) cards.append(codeCard(script));
+      let note;
+      if (!share.playlist) {
+        note = SCRIPTS.every(s => !share[s] || share[s].saved)
+          ? "These are this song's codes. They stay the same for everyone."
+          : 'Tap a character to swap it. Copying a link saves the new codes for this song, first come, first served.';
+      } else if (share.mine) {
+        note = share.saved
+          ? 'This is your playlist. Edit it any time and press Save changes: its links stay the same.'
+          : 'Tap a character or word to swap it. Copying a link saves this playlist to your account; you can edit it later and keep its links.';
+      } else {
+        note = share.saved
+          ? 'These are this playlist\'s links, the same for everyone. Editing the songs makes a new playlist.'
+          : 'Tap a character or word to swap it. Copying a link saves the playlist as it is now. Sign in to keep one link while you edit it.';
+      }
       if (hasTones()) note += ` Any skin tone opens the same ${what}.`;
-      document.getElementById('sharePanel').replaceChildren(shareHead(), cards, h('p', 'share-note', note));
+      const parts = [shareHead()];
+      if (share.playlist) {   // the ID once, since every one of the playlist's links starts with it
+        const idLine = h('p', 'share-id', 'Every link starts with ');
+        idLine.append(h('code', null, share.id), ', this playlist\'s ID. The label after it is yours to pick.');
+        parts.push(idLine);
+      }
+      document.getElementById('sharePanel').replaceChildren(...parts, cards, h('p', 'share-note', note));
     }
+
+    const isSaved = script => (share.playlist ? share.saved : !!share[script].saved);
 
     const hasTones = () => !!(share.em && share.em.chars.some(ch => ch.toneable));
 
@@ -1307,6 +1542,15 @@
       btn.disabled = !!c.taken;
       btn.addEventListener('click', () => copyCode(script));
       card.append(btn);
+      if (script !== 'en') {   // an English link is plain letters, so it already looks the same everywhere
+        const dc = h('button', 'copy-discord', 'Copy for Discord');
+        dc.type = 'button';
+        dc.disabled = !!c.taken;
+        dc.title = 'A Discord link that shows the code itself';
+        dc.setAttribute('aria-label', `Copy ${linkCode(script)} link for Discord`);
+        dc.addEventListener('click', () => copyCode(script, true));
+        card.append(dc);
+      }
       return card;
     }
 
@@ -1327,9 +1571,11 @@
       return share.em.chars[i].toneable ? share.tones[i] || '' : usualTone(o.char);
     }
 
-    // The code as it goes in the link (the saved code never has a tone)
+    // The code as it goes in the link (the saved code never has a tone). A playlist's is its ID
+    // and then the label: 5mh夜歌, or 5mh-night-drive for English.
     function linkCode(script) {
-      return script === 'em' ? share.em.chars.map((ch, i) => shownEmoji(i)).join('') : share[script].code;
+      const code = script === 'em' ? share.em.chars.map((ch, i) => shownEmoji(i)).join('') : share[script].code;
+      return share.playlist ? share.id + (script === 'en' ? '-' : '') + code : code;
     }
 
     function charPicker(script, i) {
@@ -1340,9 +1586,9 @@
       big.setAttribute('aria-hidden', 'true');
       wrap.append(big, h('span', 'mean', charLabel(script, ch)));
       const options = (c.options && c.options[i]) || [];
-      if (!c.saved && options.length > 1) {
+      if (!isSaved(script) && options.length > 1) {
         const sel = document.createElement('select');
-        const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji' }[script];
+        const noun = { zh: 'Character', eg: 'Sign', em: 'Emoji', en: 'Word' }[script];
         sel.setAttribute('aria-label', `${noun} ${i + 1}: ${face} ${charLabel(script, ch)}. Change it`);
         for (const o of options) {
           const meaning = script === 'eg' ? [o.name, o.meaning].filter(Boolean).join(' · ') : script === 'em' ? o.name : o.meaning;
@@ -1440,10 +1686,11 @@
       if (!pick) return;
       if (script === 'em') share.tones[i] = toneIfPicked(i, pick);
       c.chars = c.chars.map((ch, j) => (j === i ? pick : ch));
-      c.code = c.chars.map(ch => ch.char).join('');
+      c.code = c.chars.map(ch => ch.char).join(script === 'en' ? '-' : '');   // English words are joined with hyphens
       c.word = null;   // the "also a word" note was for the suggested pair; saving checks again
       c.taken = false;
       renderShare();
+      if (share.playlist) return;   // playlist labels can repeat, so there's nothing to check
       try {   // warn early when another song has it (saving checks again, look-alikes too)
         const rec = await lookupCode(c.code);
         if (share && share[script] === c && rec && !sameShareTarget(rec)) {
@@ -1467,30 +1714,52 @@
 
     // Copy right away, inside the tap, with the link filled in once the codes are saved,
     // so browsers that only allow copying during a tap (Safari) still copy it
-    function copyCode(script) {
+    function copyCode(script, forDiscord = false) {
       if (!share || share.busy) return;
-      const linkPromise = share[script].saved ? Promise.resolve(shareLink(script)) : claimShare(script);
-      let copying;
-      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
-        const blob = linkPromise.then(link => new Blob([link], { type: 'text/plain' }));
-        copying = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
-      } else if (navigator.clipboard) {
-        copying = linkPromise.then(link => navigator.clipboard.writeText(link));
-      } else {
-        copying = Promise.reject(new Error('no clipboard'));
-      }
-      copying.then(() => true, () => false).then(copied => linkPromise.then(link => {
+      const linkPromise = isSaved(script) ? Promise.resolve(shareLink(script))
+        : share.playlist ? savePlaylistShare(script) : claimShare(script);
+      writeLink(linkPromise, forDiscord).then(copied => linkPromise.then(link => {
         if (copied) {
-          setCardNote(script, 'Link copied!', true);
-          setStatus('Link copied!');
-        } else {
-          setCardNote(script, link, true);   // copying was refused: show the link to copy by hand
+          const done = forDiscord ? 'Copied for Discord. Paste it in a message.' : 'Link copied!';
+          setCardNote(script, done, true);
+          setStatus(done);
+        } else {   // copying was refused: show the link to copy by hand
+          setCardNote(script, forDiscord ? discordLink(link) : asciiLink(link), true);
         }
       }, () => {}));
     }
 
     function shareLink(script) {
-      return share.linkFor(linkCode(script)) + share.suffix;
+      return share.playlist ? `${SITE_BASE}/playlist/${linkCode(script)}` : share.linkFor(linkCode(script)) + share.suffix;
+    }
+
+    // Saves the playlist with its four labels: a snapshot, or the signed-in person's own playlist
+    async function savePlaylistShare(script) {
+      share.busy = true;
+      setCardNote(script, 'Saving…', true);
+      const labels = {};
+      for (const k of LABEL_KINDS) {
+        const c = share[k];
+        if (c) labels[k] = k === 'zh' ? { code: c.code, chars: c.chars, why: c.why } : { code: c.code, why: c.why };
+      }
+      const mine = share;
+      const { ok, status, data } = await postWorker('/playlist/save', { items: share.items, labels, id: share.id, idSig: share.idSig });
+      mine.busy = false;
+      if (share !== mine) throw new Error('closed');
+      if (!ok) {
+        if (status === 401) signedOutLocally();
+        showShareError(status, data);
+        throw new Error('not saved');
+      }
+      // what's saved now; when someone saved these exact songs first, their labels come back
+      const emBefore = share.em && share.em.code;
+      Object.assign(share, { id: data.id, saved: true, mine: !!data.mine });
+      for (const k of LABEL_KINDS) share[k] = (data.labels && data.labels[k]) || null;
+      if (share.em && share.em.code !== emBefore) share.tones = startTones();
+      adoptPlaylist(data);
+      renderShare();
+      if (!share[script]) throw new Error('no label');
+      return shareLink(script);
     }
 
     async function claimShare(script) {
@@ -1527,6 +1796,158 @@
     // A different song in the box means the open share card is out of date
     document.getElementById('link').addEventListener('input', () => { if (share) closeShare(); });
 
+    // ---- Accounts: email + a 6-digit code ---------------------------------------------------
+    // Signing in makes the playlists you share yours to edit, with links that stay the same.
+    // The sign-in lives in this browser; the Worker keeps only a scrambled form of the email.
+    const SESSION_KEY = 'spotiky-session';
+    let session = loadSession();               // { token, expires } or null
+    let signIn = { step: 'email', email: '' };
+
+    function loadSession() {
+      try {
+        const s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+        return s && typeof s.token === 'string' && s.expires > Date.now() ? s : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveSession(s) {
+      session = s;
+      try {
+        if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+        else localStorage.removeItem(SESSION_KEY);
+      } catch (e) {}
+      document.getElementById('accountBtn').textContent = s ? 'Your account' : 'Sign in';
+    }
+
+    function authHeaders() {
+      return session ? { Authorization: 'Bearer ' + session.token } : {};
+    }
+
+    // The Worker no longer knows this sign-in (it expired or was signed out elsewhere)
+    function signedOutLocally() {
+      saveSession(null);
+      if (listLink) listLink.mine = false;
+      showOwnerBar();
+    }
+
+    function toggleAccount() {
+      const panel = document.getElementById('accountPanel');
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) renderAccount();
+    }
+
+    function renderAccount(message, good) {
+      const panel = document.getElementById('accountPanel');
+      const head = h('div', 'share-head');
+      head.append(h('span', null, session ? 'Your account' : 'Sign in'));
+      const close = h('button', null, '✕');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', () => { panel.hidden = true; });
+      head.append(close);
+      const parts = [head];
+      const button = (text, cls, onClick) => {
+        const b = h('button', cls, text);
+        b.type = 'button';
+        b.addEventListener('click', onClick);
+        return b;
+      };
+
+      if (session) {
+        parts.push(h('p', null, 'Playlists you share while signed in are yours: edit them any time and their links stay the same.'));
+        const list = h('div', 'my-lists');
+        list.append(h('p', 'small-note', 'Loading your playlists…'));
+        parts.push(list, button('Sign out', 'secondary', signOutHere));
+        loadMyPlaylists(list);
+      } else if (signIn.step === 'email') {
+        parts.push(h('p', null, "We'll email you a 6-digit code. No password needed."));
+        const input = h('input');
+        Object.assign(input, { type: 'email', id: 'signInEmail', placeholder: 'you@example.com', autocomplete: 'email', value: signIn.email });
+        input.setAttribute('aria-label', 'Email address');
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') askForCode(); });
+        parts.push(input, button('Email me a code', null, askForCode));
+        parts.push(h('p', 'small-note', 'Spotiky keeps only a scrambled form of your email, never the address itself.'));
+      } else {
+        parts.push(h('p', null, `Enter the code we sent to ${signIn.email}. It works for 10 minutes.`));
+        const input = h('input');
+        Object.assign(input, { id: 'signInCode', inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', maxLength: 7 });
+        input.setAttribute('aria-label', '6-digit code');
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') checkCode(); });
+        parts.push(input, button('Sign in', null, checkCode));
+        const again = h('div', 'pair');
+        again.append(button('Send a new code', 'small', askForCode), button('Use another email', 'small', () => { signIn.step = 'email'; renderAccount(); }));
+        parts.push(again);
+      }
+      if (message) parts.push(h('p', good ? 'account-msg ok' : 'account-msg', message));
+      panel.replaceChildren(...parts);
+      const field = panel.querySelector('input');
+      if (field && !panel.hidden) field.focus();
+    }
+
+    async function askForCode() {
+      const field = document.getElementById('signInEmail');
+      if (field) signIn.email = field.value.trim();
+      if (!signIn.email) return renderAccount('Enter your email address first');
+      renderAccount('Sending…', true);
+      const { ok, status, data } = await postWorker('/auth/start', { email: signIn.email });
+      if (!ok) return renderAccount(status === 0 ? "Couldn't reach Spotiky. Check your connection." : data.error || "Couldn't send a code. Try again.");
+      signIn.step = 'code';
+      renderAccount(`Code sent. Check your inbox (and spam folder).`, true);
+    }
+
+    async function checkCode() {
+      const code = (document.getElementById('signInCode') || {}).value || '';
+      const { ok, data } = await postWorker('/auth/verify', { email: signIn.email, code });
+      if (!ok) {
+        if (data.expired) signIn.step = 'email';
+        return renderAccount(data.error ? data.error + (data.triesLeft != null ? ` (${data.triesLeft} tries left)` : '') : "Couldn't sign in. Try again.");
+      }
+      saveSession({ token: data.token, expires: data.expires });
+      signIn = { step: 'email', email: '' };
+      renderAccount("You're signed in.", true);
+      refreshOwnership();
+    }
+
+    async function signOutHere() {
+      await postWorker('/auth/signout', {});
+      signedOutLocally();
+      if (share && share.playlist) closeShare();
+      renderAccount('Signed out.', true);
+    }
+
+    // Signing in on a playlist's page: if it's yours, you can edit it now
+    async function refreshOwnership() {
+      if (share && share.playlist && !share.saved) closeShare();   // its suggestion was for someone signed out
+      if (!listLink) return;
+      const { ok, data } = await getWorker('/playlist?id=' + listLink.id);
+      if (ok && listLink && listLink.id === data.id) listLink.mine = !!data.mine;
+      showOwnerBar();
+    }
+
+    async function loadMyPlaylists(box) {
+      const { ok, status, data } = await getWorker('/playlists/mine');
+      if (!ok) {
+        if (status === 401) {
+          signedOutLocally();
+          return renderAccount('Your sign-in has ended. Sign in again.');
+        }
+        return box.replaceChildren(h('p', 'small-note', "Couldn't load your playlists right now."));
+      }
+      if (!data.playlists.length) return box.replaceChildren(h('p', 'small-note', 'No playlists yet. Share one from the playlist page and it will show up here.'));
+      const list = h('ul');
+      for (const p of data.playlists) {
+        const label = pickLabel(p.labels, '');
+        const a = h('a', null, `spotiky.com/playlist/${p.id}${label}`);
+        a.href = `/playlist/${p.id}${label}`;
+        const li = h('li');
+        li.append(a, h('span', 'small-note', ` · ${splitLinks(p.items).length} songs`));
+        list.append(li);
+      }
+      box.replaceChildren(h('p', 'small-note', 'Your playlists'), list);
+    }
+
     function startPlayer(IFrameAPI) {
       const element = document.getElementById('embed');
       IFrameAPI.createController(element, {
@@ -1553,6 +1974,7 @@
       });
     }
 
+    if (session) document.getElementById('accountBtn').textContent = 'Your account';
     if (view === 'playlist') {
       initPlaylistView();
     } else {
