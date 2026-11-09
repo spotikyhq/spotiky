@@ -36,10 +36,11 @@
 // code: 👋🏾🌙 and 👋🌙 are one code, and the person sharing picks the tone for their link.
 //
 // Playlist links: spotiky.com/playlist/<id><label>, like 5mh夜歌 or 5mh-night-drive. The ID
-// (3 or more characters from 32 that can't be mixed up) finds the playlist. The label is one
-// of a matching set in Chinese, hieroglyphs, emoji and English; labels can repeat. Saved
-// without signing in, a playlist is a snapshot whose ID comes from a fingerprint of its songs
-// and times. A signed-in person's playlist gets its own ID and stays theirs to edit.
+// (3 or more characters from 32 that can't be mixed up, always with a digit) finds the
+// playlist. The label is one of a matching set in Chinese, hieroglyphs, emoji and English;
+// labels can repeat. Saved without signing in, a playlist is a snapshot whose ID comes from a
+// fingerprint of its songs and times. A signed-in person's playlist gets its own ID and stays
+// theirs to edit.
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
@@ -51,8 +52,16 @@ const CODE_RE = /^[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Present
 const ID_RE = /^[a-zA-Z0-9]{22}$/;
 const ITEM_RE = /^(?:[a-zA-Z0-9]{22}(?:\$\d+(?:-\d+)?)?|[\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}]{1,6}(?:\d+(?:-\d+)?)?)$/u;
 const ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";   // no i, l, o or u: nothing to mix up with 1 or 0
-const PLAYLIST_ID_RE = /^[0-9a-hjkmnp-tv-z]{3,13}$/;
-const ID_BLOCK = ["ass", "sex", "fag", "fck", "fk", "kkk", "xxx", "wtf", "dck", "fap"];
+// Every playlist ID has a digit (5mh, k7f), so a word is never read as an ID
+const PLAYLIST_ID_RE = /^(?=.*[0-9])[0-9a-hjkmnp-tv-z]{3,13}$/;
+// Words no ID may contain, also when spelled with numbers: a55, 5h1t, b00b, 8008, c0ck.
+// Letters IDs can't have (i, l, o, u) only ever show up as their number stand-ins.
+const ID_BLOCK = ["ass", "sex", "fag", "fgt", "fuck", "phuck", "fck", "fk", "kkk", "xxx", "wtf", "fap", "shit", "sht",
+  "dick", "dck", "dik", "cock", "cunt", "cum", "piss", "tit", "boob", "penis", "porn", "slut", "whore", "hoe",
+  "bitch", "btch", "twat", "wank", "jizz", "vag", "rape", "pedo", "kys", "nig", "negro", "nazi", "hitler", "1488",
+  "kike", "spic", "chink", "gook", "coon", "jap", "wop", "dyke", "homo", "tranny", "retard"];
+const LEET = { a: "4", b: "8", c: "k", e: "3", g: "69", i: "1", l: "1", o: "0", s: "5", t: "7", u: "v", z: "2" };
+const ID_BLOCK_RE = new RegExp(ID_BLOCK.map(w => [...w].map(ch => LEET[ch] ? `[${ch}${LEET[ch]}]` : ch).join("")).join("|"));
 const EN_RE = /^[a-z]{2,12}(?:-[a-z]{2,12})?$/;
 const MINUTE = 60e3, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
 const CODE_MINUTES = 10, CODE_TRIES = 5, SESSION_DAYS = 30;
@@ -1232,14 +1241,13 @@ async function insertPlaylist(db, row, ids) {
 }
 
 // Snapshot IDs: the start of the playlist's fingerprint, one character longer each time it's
-// taken. A start that spells something rude moves on to the fingerprint of a variation.
+// taken, then the fingerprint of a variation. Starts that spell something rude are skipped.
 async function* snapshotIds(items, hash) {
   let h = hash;
   for (let variation = 1; variation <= 20; variation++) {
     for (let len = 3; len <= 13; len++) {
-      const id = h.slice(0, len);
-      if (rude(id)) break;
-      yield id;
+      const id = withDigit(h.slice(0, len));
+      if (!rude(id)) yield id;
     }
     h = await fingerprint(items + "\n" + variation);
   }
@@ -1249,10 +1257,16 @@ async function* snapshotIds(items, hash) {
 function* randomIds() {
   for (let len = 3; len <= 13; len++) {
     for (let n = 0; n < (len < 13 ? 6 : 30); n++) {
-      const id = randomId(len);
+      const id = withDigit(randomId(len));
       if (!rude(id)) yield id;
     }
   }
+}
+
+// An ID made only of letters gets its last letter turned into a digit (the same one each time)
+function withDigit(id) {
+  if (/[0-9]/.test(id)) return id;
+  return id.slice(0, -1) + String(ID_ALPHABET.indexOf(id[id.length - 1]) % 10);
 }
 
 async function* withFirst(first, rest) {
@@ -1267,7 +1281,7 @@ async function freshId(db, ids) {
   return null;
 }
 
-const rude = id => ID_BLOCK.some(w => id.includes(w));
+const rude = id => ID_BLOCK_RE.test(id);
 
 // Labels as sent by the page -> { stored, why } or { error, kind }
 function cleanLabels(given) {

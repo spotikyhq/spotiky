@@ -19,19 +19,19 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Egyptian Hieroglyphs", "Segoe UI Historic", sans-serif;
       max-width: 520px;
       margin: 0 auto;
-      padding: 32px 20px;
+      padding: 24px 20px 32px;
       background: #121212;
       color: #fff;
       line-height: 1.5;
     }
-    h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; }
-    .subtitle { color: #b3b3b3; margin: 0 0 10px; font-size: 0.95rem; }
-    label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 6px; }
+    h1 { font-size: 1.75rem; margin: 0 0 4px; font-weight: 700; line-height: 1.25; }
+    .subtitle { color: #b3b3b3; margin: 0 0 8px; font-size: 0.95rem; }
+    label, .label { display: block; font-size: 0.85rem; color: #b3b3b3; margin-bottom: 4px; }
     .optional { color: #666; }
     input {
       width: 100%;
-      padding: 14px 16px;
-      margin-bottom: 16px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
       font-size: 16px;
       border-radius: 8px;
       border: none;
@@ -43,8 +43,8 @@
     button {
       font-family: inherit;
       width: 100%;
-      padding: 14px;
-      margin-top: 8px;
+      padding: 13px;
+      margin-top: 4px;
       font-size: 16px;
       font-weight: 600;
       border: none;
@@ -60,26 +60,37 @@
     button.small { padding: 9px; margin-top: 0; font-size: 0.85rem; font-weight: 500; background: #282828; }
     button.small:hover { background: #3e3e3e; }
     .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .marks { margin: -6px 0 8px; }
+    .pair > * { min-width: 0; }
+    /* Start and end side by side; the Now buttons sit inside the boxes once a song plays */
+    .mark-box { position: relative; margin-bottom: 12px; }
+    .mark-box input { display: block; margin: 0; }
+    .mark { display: none; position: absolute; right: 6px; top: 6px; bottom: 6px; width: auto; margin: 0; padding: 0 10px;
+            font-size: 0.8rem; font-weight: 600; border-radius: 6px; background: #3a3a3a; }
+    .mark:hover { background: #4a4a4a; }
+    .times.marking .mark { display: block; }
+    .times.marking input { padding-right: 62px; }
+    .actions { margin-top: 10px; }
+    .actions button { margin-top: 0; padding-left: 8px; padding-right: 8px; }
     #status {
-      margin-top: 18px;
+      margin-top: 8px;
       color: #b3b3b3;
-      min-height: 24px;
+      min-height: 22px;
       font-size: 0.9rem;
     }
     #embed {
-      margin-top: 24px;
+      margin-top: 8px;
       border-radius: 12px;
       overflow: hidden;
       background: #181818;
     }
     #previewPlayer {
-      margin-top: 16px;
+      margin-top: 12px;
       display: none;
       background: #181818;
       border-radius: 12px;
       padding: 16px;
     }
+    #previewLabel { font-size: 0.9rem; color: #b3b3b3; margin-bottom: 8px; }
     #previewPlayer audio { width: 100%; margin-top: 8px; }
     /* Header with the account button, the sign-in panel, and the owner's Save bar */
     .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 4px; }
@@ -107,12 +118,12 @@
     .code-chars.en .big { font-size: 17px; line-height: 2.2; }
 
     /* Notes under the subtitle: where to go next, the login tip and the link formats */
-    .top-notes { font-size: 0.8rem; color: #9a9a9a; margin: 0 0 24px; }
+    .top-notes { font-size: 0.8rem; color: #9a9a9a; margin: 0 0 16px; line-height: 1.45; }
     .top-notes p { margin: 0 0 6px; }
     .top-notes a { color: #1DB954; text-decoration: none; font-weight: 600; white-space: nowrap; }
     .top-notes .sep { margin: 0 6px; color: #555; }
     .top-notes code { font-size: 0.95em; color: #ddd; }
-    .formats { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 8px 0 0; }
+    .formats { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; margin: 6px 0 0; }
     .formats dt { color: #b3b3b3; }
     .formats dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
     code { background: #282828; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
@@ -167,6 +178,17 @@
     .code-card .copy-code { margin-top: auto; padding: 10px; font-size: 0.85rem; }
     .code-card .copy-code:disabled { opacity: 0.45; cursor: default; }
     .code-card .copy-code:disabled:hover { background: #282828; }
+    .code-card .copy-discord { width: auto; align-self: center; margin: 4px 0 -4px; padding: 4px 8px; background: none; color: #9a9a9a; font-size: 0.75rem; font-weight: 500; }
+    .code-card .copy-discord:hover { background: none; color: #fff; text-decoration: underline; }
+    .code-card .copy-discord:disabled { opacity: 0.45; cursor: default; text-decoration: none; }
+
+    /* Phones: a little less around the edges, so the player fits under Play (last, so it wins) */
+    @media (max-width: 480px) {
+      body { padding: 14px 16px 28px; }
+      h1 { font-size: 1.6rem; }
+      .top-notes { margin-bottom: 12px; }
+    }
+    @media (max-width: 380px) { .subtitle { font-size: 0.85rem; } }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -188,7 +210,7 @@
   <div id="accountPanel" class="share account" hidden></div>
 
   <div class="top-notes" id="trackHint">
-    <p><a href="/playlist">Make a playlist →</a><span class="sep">·</span>Full songs play when you're logged into Spotify in this browser; otherwise you'll hear a short preview.</p>
+    <p><a href="/playlist">Make a playlist →</a><span class="sep">·</span>Log into Spotify in this browser for full songs; otherwise you'll hear a preview.</p>
     <dl class="formats">
       <dt>Share link</dt><dd><code>open.spotiky.com/track/ID$83</code></dd>
       <dt>Clip</dt><dd><code>open.spotiky.com/track/ID$1:23-1:45</code></dd>
@@ -204,20 +226,48 @@
     <label for="link">Song link or code</label>
     <input id="link" placeholder="Spotify or Spotiky link, or a Spotiky code" autocomplete="off">
 
-    <label for="time">Start time</label>
-    <input id="time" placeholder="1:23  ·  $1.23  ·  $83 ·  .83" autocomplete="off">
-
-    <label for="endTime">End time <span class="optional">(optional, plays just that part)</span></label>
-    <input id="endTime" placeholder="1:45" autocomplete="off">
-
-    <div class="pair marks" id="marks" hidden>
-      <button class="small" type="button" onclick="markTime('time')">Set start here</button>
-      <button class="small" type="button" onclick="markTime('endTime')">Set end here</button>
+    <!-- Start and end side by side. Once a song plays, each gets a Now button: "the song is here" -->
+    <div class="pair times" id="times">
+      <div>
+        <label for="time">Start time</label>
+        <div class="mark-box">
+          <input id="time" placeholder="1:23 · $83" autocomplete="off">
+          <button class="mark" type="button" onclick="markTime('time')" aria-label="Set start to now" title="Set the start to where the song is now">Now</button>
+        </div>
+      </div>
+      <div>
+        <label for="endTime">End time <span class="optional">(optional)</span></label>
+        <div class="mark-box">
+          <input id="endTime" placeholder="1:45" autocomplete="off">
+          <button class="mark" type="button" onclick="markTime('endTime')" aria-label="Set end to now" title="Set the end to where the song is now">Now</button>
+        </div>
+      </div>
     </div>
 
     <button onclick="play()">Play from timestamp</button>
-    <button class="secondary" onclick="copyShareLink()">Copy shareable link</button>
-    <button class="secondary" onclick="shareTrack()">Share as a code</button>
+    <!-- The player sits right under Play, so it's on screen when the song starts. On the playlist
+         page this whole block moves under that page's Play buttons. -->
+    <div id="playerBlock">
+      <div id="status">Waiting for player…</div>
+      <button id="replayBtn" class="secondary" hidden></button>
+
+      <div id="loginPrompt" class="notice" hidden>
+        <strong>Log in to Spotify to hear this playlist</strong>
+        Spotify only plays full songs, and your exact clips, to listeners who are logged in. After logging in, come back here and press Play playlist.
+        <br><a href="https://accounts.spotify.com/login" target="_blank" rel="noopener">Log in to Spotify</a>
+      </div>
+
+      <div id="embed"></div>
+
+      <div id="previewPlayer">
+        <div id="previewLabel">Preview</div>
+        <audio id="previewAudio" controls playsinline></audio>
+      </div>
+    </div>
+    <div class="pair actions">
+      <button class="secondary" onclick="copyShareLink()">Copy link</button>
+      <button class="secondary" onclick="shareTrack()">Share as a code</button>
+    </div>
   </section>
 
   <section id="playlistView" hidden>
@@ -240,29 +290,13 @@
       <button class="secondary" onclick="plStep(-1)">⏮ Previous</button>
       <button class="secondary" onclick="plStep(1)">Next ⏭</button>
     </div>
-    <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
-    <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
+    <div class="pair actions">
+      <button class="secondary" onclick="copyPlaylistLink()">Copy playlist link</button>
+      <button class="secondary" onclick="sharePlaylist()">Share as a code</button>
+    </div>
   </section>
 
   <div id="sharePanel" class="share" hidden></div>
-
-  <div id="status">Waiting for player…</div>
-  <button id="replayBtn" class="secondary" hidden></button>
-
-  <div id="loginPrompt" class="notice" hidden>
-    <strong>Log in to Spotify to hear this playlist</strong>
-    Spotify only plays full songs, and your exact clips, to listeners who are logged in. After logging in, come back here and press Play playlist.
-    <br><a href="https://accounts.spotify.com/login" target="_blank" rel="noopener">Log in to Spotify</a>
-  </div>
-
-  <div id="embed"></div>
-
-  <div id="previewPlayer" style="display:none; margin-top:16px; background:#181818; border-radius:12px; padding:16px;">
-    <div id="previewLabel" style="font-size:0.9rem; color:#b3b3b3; margin-bottom:8px;">
-      Preview
-    </div>
-    <audio id="previewAudio" controls playsinline style="width:100%;"></audio>
-  </div>
 
 
   <script>
@@ -270,6 +304,8 @@
     const SHARE_BASE = "https://open.spotiky.com";   // track links mirror open.spotify.com
     const SITE_BASE = "https://spotiky.com";         // playlist and code links don't need open.
     const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : 'track';
+    // The player goes under the page's own Play buttons: on the playlist page, under Play playlist
+    if (view === 'playlist') document.getElementById('plControls').after(document.getElementById('playerBlock'));
 
     let controller = null;
     let pendingAction = null;   // runs once the Spotify player is ready
@@ -348,10 +384,10 @@
       return m ? { id: m[1], ...parseRange(s.slice(m.index + m[0].length)) } : null;
     }
 
-    // A playlist's short link: an ID made of letters and digits that can't be mixed up, then one
-    // of its labels:  5mh夜歌   5mh𓇰𓇼   5mh🌙🎧   5mh-night-drive   or just 5mh
+    // A playlist's short link: an ID made of letters and digits that can't be mixed up, always
+    // with a digit, then one of its labels:  5mh夜歌   5mh𓇰𓇼   5mh🌙🎧   5mh-night-drive   or just 5mh
     // label is what follows the ID as written, hyphen included: "夜歌" or "-night-drive"
-    const PLAYLIST_LINK_RE = /^([0-9a-hjkmnp-tv-z]{3,13})(?=$|-|[^\x00-\x7F])(.*)$/iu;
+    const PLAYLIST_LINK_RE = /^(?=[0-9a-hjkmnp-tv-z]{0,12}[0-9])([0-9a-hjkmnp-tv-z]{3,13})(?=$|-|[^\x00-\x7F])(.*)$/iu;
     function parsePlaylistLink(text) {
       const s = decodeSafe(String(text).trim());
       if (/spotify/i.test(s)) return null;
@@ -465,12 +501,39 @@
       document.getElementById('status').textContent = msg;
     }
 
-    function copyText(text) {
-      if (!navigator.clipboard) { prompt('Copy this link:', text); return; }
-      navigator.clipboard.writeText(text).then(() => {
-        setStatus('Link copied!');
-      }).catch(() => {
-        prompt('Copy this link:', text);
+    // ---- Copying links ------------------------------------------------------------
+    // A copied link is plain ASCII: spotiky.com/夜光 goes out as spotiky.com/%E5%A4%9C%E5%85%89.
+    // Some apps end a link at its first emoji or Chinese character (Discord at emoji, X at
+    // both), while every app opens an ASCII link, and browsers show the characters again once
+    // it's open. Apps that keep formatting (email, docs, Slack) get the readable spotiky.com/夜光
+    // as the link's text. Code cards can also copy a Discord link, which shows the code itself.
+    const asciiLink = link => String(link).replace(/[^\x00-\x7F]+/gu, s => encodeURIComponent(s));
+    const prettyLink = link => String(link).replace(/^https?:\/\//, '');
+    // [🌙🎧](https://spotiky.com/%F0%9F…): Discord shows the code and opens the link. The text is
+    // the code alone, since Discord turns down masked links whose text is a whole address.
+    const discordLink = link => `[${prettyLink(link).replace(/^[^/]*\/(?:playlist\/|track\/)?/, '')}](${asciiLink(link)})`;
+    const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+    // Puts a link on the clipboard; resolves to whether that worked. The link can be a promise,
+    // so the copy starts inside the tap (Safari only allows it there) and fills in once ready.
+    function writeLink(link, forDiscord = false) {
+      const ready = Promise.resolve(link);
+      const text = ready.then(l => forDiscord ? discordLink(l) : asciiLink(l));
+      const plainCopy = () => text.then(t => navigator.clipboard.writeText(t)).then(() => true, () => false);
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        const parts = { 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) };
+        if (!forDiscord) {
+          parts['text/html'] = ready.then(l => new Blob([`<a href="${escapeHtml(asciiLink(l))}">${escapeHtml(prettyLink(l))}</a>`], { type: 'text/html' }));
+        }
+        return navigator.clipboard.write([new ClipboardItem(parts)]).then(() => true, plainCopy);
+      }
+      return navigator.clipboard ? plainCopy() : Promise.resolve(false);
+    }
+
+    function copyLink(link) {
+      writeLink(link).then(ok => {
+        if (ok) setStatus('Link copied!');
+        else prompt('Copy this link:', asciiLink(link));
       });
     }
 
@@ -492,7 +555,7 @@
         const data = await res.json();
 
         if (!data.preview_url) {
-          setStatus('No preview available. Tap the green ▶ in the Spotify player above.');
+          setStatus('No preview available. Tap the green ▶ in the Spotify player below.');
           return;
         }
 
@@ -523,7 +586,7 @@
           });
         }
       } catch (e) {
-        setStatus('Preview failed. Tap the green ▶ in the Spotify player above.');
+        setStatus('Preview failed. Tap the green ▶ in the Spotify player below.');
       }
     }
 
@@ -624,7 +687,7 @@
       const t = performance.now();
       const pos = d.position || 0, dur = d.duration || 0, playing = !d.isPaused;
       seen = { pos, at: t, playing };
-      if (playing && view === 'track') document.getElementById('marks').hidden = false;
+      if (playing && view === 'track') document.getElementById('times').classList.add('marking');
 
       if (playing && pos > 500) {   // the embed is really playing
         clearTimeout(fallbackTimer);
@@ -684,6 +747,7 @@
       history.replaceState(null, '', code
         ? `/${code}${codeSuffix(seconds, end)}`
         : `/track/${trackId}$${seconds}` + (end != null ? `-${end}` : ''));
+      setTimeout(revealPlayer, 300);   // after a phone's keyboard has closed
 
       if (!controller) {
         pendingAction = () => play(trackId, seconds, end, code);
@@ -704,6 +768,14 @@
       });
     }
 
+    // The player sits right under Play. On a screen too short for it, bring it into view, just
+    // far enough that all of it shows.
+    function revealPlayer() {
+      const block = document.getElementById('playerBlock');
+      const r = block.getBoundingClientRect();
+      if (r.bottom > window.innerHeight || r.top < 0) block.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     // What the link box asks for: { code, start, end }, { id, start, end }, { list } for a
     // Spotiky playlist link, or null. The link's own start and end count unless the time
     // boxes say otherwise, so a copied spotiky.com/track/ID$1:23-1:45 keeps its clip.
@@ -712,7 +784,10 @@
       const list = spotikyList(raw);
       if (list) return { list };
       const found = parseCodeText(raw) || parseTrackText(raw);
-      if (!found) return null;
+      if (!found) {
+        const short = parsePlaylistLink(raw);   // a playlist's short code on its own: 5mh夜歌, 5mh
+        return short ? { list: short.id + short.label } : null;
+      }
       const timeBox = document.getElementById('time').value.trim();
       const endBox = document.getElementById('endTime').value.trim();
       const start = parseTime(timeBox || found.time || '0');
@@ -764,7 +839,7 @@
       showReplay('↺ Replay clip', () => play(c.id, c.start, c.end, c.code));
     }
 
-    // "Set start here" / "Set end here": use where the song is right now
+    // The Now buttons in the time boxes: use where the song is right now
     function markTime(field) {
       if (!seen) {
         setStatus('Play the song first, then tap this at the right moment');
@@ -778,10 +853,10 @@
 
     function copyShareLink() {
       const want = readTrackBox();
-      if (want && want.list) return copyText(`${SITE_BASE}/playlist/${want.list}`);
+      if (want && want.list) return copyLink(`${SITE_BASE}/playlist/${want.list}`);
       if (trackBoxProblem(want)) return;
-      if (want.code) return copyText(`${SITE_BASE}/${want.code}${codeSuffix(want.start, want.end)}`);
-      copyText(buildShareUrl(want.id, want.start, want.end));
+      if (want.code) return copyLink(`${SITE_BASE}/${want.code}${codeSuffix(want.start, want.end)}`);
+      copyLink(buildShareUrl(want.id, want.start, want.end));
     }
 
     // Pasting a link that has a start or a clip puts its times in the boxes, replacing the old ones
@@ -1133,7 +1208,7 @@
         setStatus('Add at least one song first');
         return;
       }
-      copyText(SITE_BASE + currentListPath());
+      copyLink(SITE_BASE + currentListPath());
     }
 
     // Code and short-link rows still being looked up finish first (a playlist's songs can bring more codes)
@@ -1467,6 +1542,15 @@
       btn.disabled = !!c.taken;
       btn.addEventListener('click', () => copyCode(script));
       card.append(btn);
+      if (script !== 'en') {   // an English link is plain letters, so it already looks the same everywhere
+        const dc = h('button', 'copy-discord', 'Copy for Discord');
+        dc.type = 'button';
+        dc.disabled = !!c.taken;
+        dc.title = 'A Discord link that shows the code itself';
+        dc.setAttribute('aria-label', `Copy ${linkCode(script)} link for Discord`);
+        dc.addEventListener('click', () => copyCode(script, true));
+        card.append(dc);
+      }
       return card;
     }
 
@@ -1630,25 +1714,17 @@
 
     // Copy right away, inside the tap, with the link filled in once the codes are saved,
     // so browsers that only allow copying during a tap (Safari) still copy it
-    function copyCode(script) {
+    function copyCode(script, forDiscord = false) {
       if (!share || share.busy) return;
       const linkPromise = isSaved(script) ? Promise.resolve(shareLink(script))
         : share.playlist ? savePlaylistShare(script) : claimShare(script);
-      let copying;
-      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
-        const blob = linkPromise.then(link => new Blob([link], { type: 'text/plain' }));
-        copying = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
-      } else if (navigator.clipboard) {
-        copying = linkPromise.then(link => navigator.clipboard.writeText(link));
-      } else {
-        copying = Promise.reject(new Error('no clipboard'));
-      }
-      copying.then(() => true, () => false).then(copied => linkPromise.then(link => {
+      writeLink(linkPromise, forDiscord).then(copied => linkPromise.then(link => {
         if (copied) {
-          setCardNote(script, 'Link copied!', true);
-          setStatus('Link copied!');
-        } else {
-          setCardNote(script, link, true);   // copying was refused: show the link to copy by hand
+          const done = forDiscord ? 'Copied for Discord. Paste it in a message.' : 'Link copied!';
+          setCardNote(script, done, true);
+          setStatus(done);
+        } else {   // copying was refused: show the link to copy by hand
+          setCardNote(script, forDiscord ? discordLink(link) : asciiLink(link), true);
         }
       }, () => {}));
     }
