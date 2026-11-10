@@ -13,10 +13,13 @@
 //
 // Nothing secret is written to this folder, so the folder is safe to upload to GitHub.
 // Needs Node.js 22.12 or newer (what Wrangler needs).
-//   --new-resend-key   replace the Worker's Resend key
+//   --chrome-profile Work   sign in to Cloudflare in that Chrome profile, not the default browser
+//                           (the name Chrome shows for it, or its folder, like "Profile 1")
+//   --no-browser            just print the sign-in link, to open in any browser yourself
+//   --new-resend-key        replace the Worker's Resend key
 // The Resend key can also come from the RESEND_API_KEY environment variable.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -29,6 +32,17 @@ const WORKER_URL = process.env.SPOTIKY_WORKER_URL || "https://spotiky-preview.sp
 const CONFIG = "wrangler.jsonc";
 const BACKUP = join(homedir(), "spotiky-PEPPER-backup.txt");
 const NEW_RESEND_KEY = process.argv.includes("--new-resend-key");
+const NO_BROWSER = process.argv.includes("--no-browser");
+const CHROME_PROFILE = (() => {   // --chrome-profile Work, or --chrome-profile=Work
+  const i = process.argv.findIndex(a => a === "--chrome-profile" || a.startsWith("--chrome-profile="));
+  if (i < 0) return null;
+  const value = process.argv[i].includes("=") ? process.argv[i].slice(process.argv[i].indexOf("=") + 1) : process.argv[i + 1];
+  if (!value || value.startsWith("--")) {
+    console.error('✗ Say which Chrome profile, like:  node setup.mjs --chrome-profile "Work"');
+    process.exit(1);
+  }
+  return value;
+})();
 
 const say = text => console.log(text);
 const step = text => console.log(`\n▸ ${text}`);
@@ -95,12 +109,84 @@ function askHidden(question) {
   });
 }
 
+// Chrome keeps its profiles' names in its Local State file
+function chromeLocalState() {
+  const home = homedir();
+  if (process.platform === "darwin") return join(home, "Library", "Application Support", "Google", "Chrome", "Local State");
+  if (process.platform === "win32") return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "Google", "Chrome", "User Data", "Local State");
+  return join(home, ".config", "google-chrome", "Local State");
+}
+
+// The folder of the Chrome profile asked for, by the name Chrome shows or by folder
+function chromeProfileFolder(wanted) {
+  let profiles;
+  try {
+    profiles = Object.entries(JSON.parse(readFileSync(chromeLocalState(), "utf8")).profile.info_cache);
+  } catch (err) {
+    return wanted;   // can't read Chrome's list: take it as the folder name
+  }
+  const w = wanted.toLowerCase();
+  const hit = profiles.find(([folder, info]) => folder.toLowerCase() === w || String(info.name || "").toLowerCase() === w);
+  if (hit) return hit[0];
+  say(`  Chrome has no profile called "${wanted}". Its profiles: ${profiles.map(([folder, info]) => `"${info.name}" (${folder})`).join(", ")}`);
+  return null;
+}
+
+// Opens a link in one Chrome profile. Starts Chrome directly, never through a shell, so the
+// link's & characters stay part of the link.
+function openInChrome(url, wanted) {
+  const folder = chromeProfileFolder(wanted);
+  if (!folder) return say("  So open the link above in Chrome yourself, in the profile you want.");
+  const flag = `--profile-directory=${folder}`;
+  let command, args;
+  if (process.platform === "darwin") {
+    [command, args] = ["open", ["-na", "Google Chrome", "--args", flag, url]];
+  } else if (process.platform === "win32") {
+    const places = [process.env.PROGRAMFILES, process.env["PROGRAMFILES(X86)"], process.env.LOCALAPPDATA]
+      .filter(Boolean).map(p => join(p, "Google", "Chrome", "Application", "chrome.exe"));
+    [command, args] = [places.find(p => existsSync(p)) || "chrome.exe", [flag, url]];
+  } else {
+    [command, args] = ["google-chrome", [flag, url]];
+  }
+  const chrome = spawn(command, args, { detached: true, stdio: "ignore" });
+  chrome.on("error", () => say("  Couldn't start Chrome, so open the link above in your Chrome profile yourself."));
+  chrome.unref();
+  say(`  Opened it in your Chrome profile "${wanted}". Finish signing in there.`);
+}
+
+// Wrangler prints the sign-in link instead of opening the default browser, then waits up to
+// two minutes for the sign-in to finish
+function loginWithLink() {
+  return new Promise(resolve => {
+    const login = spawn("npx", ["--yes", "wrangler@4", "login", "--browser=false"], {
+      stdio: ["inherit", "pipe", "inherit"],
+      shell: process.platform === "win32",
+      env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
+    });
+    let seen = "", opened = false;
+    login.stdout.on("data", chunk => {
+      process.stdout.write(chunk);
+      seen += String(chunk).replace(/\x1b\[[0-9;]*m/g, "");   // without color codes, which would stick to the link
+      const link = !opened && (seen.match(/authenticate:\s*(https:\/\/\S+)\s/) || seen.match(/(https:\/\/\S+\/oauth2\/auth\S*)\s/));
+      if (!link) return;
+      opened = true;
+      if (CHROME_PROFILE) openInChrome(link[1], CHROME_PROFILE);
+      else say("  Open that link in the browser you want to sign in with, within two minutes.");
+    });
+    login.on("error", err => stop(`Couldn't run npx, which comes with Node.js: ${err.message}`));
+    login.on("close", code => resolve(code === 0));
+  });
+}
+
 // ---- 1. Cloudflare sign-in ------------------------------------------------------------
 step("Cloudflare sign-in");
 if (wrangler(["whoami", "--json"], { quiet: true }).ok) {
   say("  Already signed in.");
+} else if (CHROME_PROFILE || NO_BROWSER) {
+  if (!await loginWithLink()) stop("The Cloudflare sign-in didn't finish. Run this again.");
 } else {
-  say("  Your browser will open so you can sign in to Cloudflare.");
+  say("  Your default browser will open so you can sign in to Cloudflare.");
+  say('  (To use a Chrome profile instead: node setup.mjs --chrome-profile "Work")');
   if (!wrangler(["login"]).ok) stop("The Cloudflare sign-in didn't finish. Run this again.");
 }
 
