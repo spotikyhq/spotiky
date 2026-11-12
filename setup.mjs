@@ -59,13 +59,24 @@ if (!existsSync("preview-worker.js") || !existsSync(CONFIG)) {
   stop(`Run this in the folder that has preview-worker.js and ${CONFIG}.`);
 }
 
+// How to start npx with these arguments. On Windows npx is a .cmd file, which Node only
+// starts through the shell, and there the whole command goes as one string: Node warns
+// when separate arguments are handed to a shell.
+function npx(args) {
+  const all = ["--yes", "wrangler@4", ...args];
+  if (process.platform !== "win32") return { command: "npx", args: all, shell: false };
+  const quote = a => /^[\w@.=:\/-]+$/.test(a) ? a : `"${a.replace(/"/g, '""')}"`;
+  return { command: ["npx", ...all.map(quote)].join(" "), args: [], shell: true };
+}
+
 // Runs Wrangler through npx. quiet: keep its output to read it here. input: text it reads.
 function wrangler(args, { quiet = false, input } = {}) {
-  const res = spawnSync("npx", ["--yes", "wrangler@4", ...args], {
+  const run = npx(args);
+  const res = spawnSync(run.command, run.args, {
     encoding: "utf8",
     input,
     stdio: quiet || input !== undefined ? "pipe" : "inherit",
-    shell: process.platform === "win32",
+    shell: run.shell,
     env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
   });
   if (res.error) stop(`Couldn't run npx, which comes with Node.js: ${res.error.message}`);
@@ -158,9 +169,10 @@ function openInChrome(url, wanted) {
 // two minutes for the sign-in to finish
 function loginWithLink() {
   return new Promise(resolve => {
-    const login = spawn("npx", ["--yes", "wrangler@4", "login", "--browser=false"], {
+    const run = npx(["login", "--browser=false"]);
+    const login = spawn(run.command, run.args, {
       stdio: ["inherit", "pipe", "inherit"],
-      shell: process.platform === "win32",
+      shell: run.shell,
       env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
     });
     let seen = "", opened = false;
