@@ -1,0 +1,16 @@
+// Cloudflare's settings for the Spotiky Worker. Wrangler (Cloudflare's command-line tool) and
+// Workers Builds both read this file. It holds no secrets: PEPPER and RESEND_API_KEY live only
+// in Cloudflare. setup.mjs sets them, and fills in the database ID below.
+{
+  "name": "spotiky-preview",
+  "main": "preview-worker.js",
+  "compatibility_date": "2026-06-01",
+  // Keeps the address spotiky-preview.spotikyhq.workers.dev
+  "workers_dev": true,
+  // Workers AI suggests codes from what a song is about
+  "ai": { "binding": "AI" },
+  // Codes, playlists and sign-ins. The Worker makes its own tables the first time it's used.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "spotiky", "database_id": "a2457e37-83d4-4efd-bef9-19f894c26404" }
+  ]
+}
