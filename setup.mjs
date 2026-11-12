@@ -179,6 +179,10 @@ function loginWithLink() {
 }
 
 // ---- 1. Cloudflare sign-in ------------------------------------------------------------
+// The first run downloads Wrangler, so that happens in view: progress and any errors show
+step("Getting Wrangler, Cloudflare's tool (the first time takes a minute or two)");
+if (!wrangler(["--version"]).ok) stop("Wrangler didn't start. The lines above say why.");
+
 step("Cloudflare sign-in");
 if (wrangler(["whoami", "--json"], { quiet: true }).ok) {
   say("  Already signed in.");
