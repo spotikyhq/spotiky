@@ -1028,6 +1028,7 @@
       input.value = value;
       input.addEventListener('paste', onRowPaste);
       input.addEventListener('input', onRowInput);
+      input.addEventListener('change', () => tidyRow(row));
       input.addEventListener('keydown', onRowKey);
       row.querySelector('.remove').addEventListener('click', () => removeRow(row));
       row.querySelector('.num').addEventListener('click', () => playFromRow(row));
@@ -1150,7 +1151,7 @@
       const input = e.target, row = input.closest('.row');
       if (pieces.length <= 1 && !spotikyList(text)) {
         // One link: let it paste normally, then open a fresh row for the next one
-        setTimeout(() => { if (row.item) nextEmptyRow(row); }, 0);
+        setTimeout(() => { tidyRow(row); if (row.item) nextEmptyRow(row); }, 0);
         return;
       }
       e.preventDefault();   // several links, or a Spotiky playlist link: its songs become rows
@@ -1170,14 +1171,23 @@
       onRowsChanged();
     }
 
+    // A full Spotify link in a row becomes just its track ID, times kept:
+    // open.spotify.com/track/3bgn…?si=… -> 3bgnrHHwyYRtz3ykzAVImy. The song's name shows under it.
+    function tidyRow(row) {
+      if (!row.item || !row.item.id || row.item.code || row.item.list) return;
+      const input = row.querySelector('input'), short = itemToken(row.item);
+      if (input.value.trim() !== short) input.value = short;
+    }
+
     // Puts links into this row (when it's free) and new rows after it
     function fillRows(row, pieces, useRow) {
       let last = row;
       if (useRow && pieces.length) {
         row.querySelector('input').value = pieces.shift();
         refreshRow(row);
+        tidyRow(row);
       }
-      for (const p of pieces) last = addRow(p, last);
+      for (const p of pieces) { last = addRow(p, last); tidyRow(last); }
       nextEmptyRow(last);
       onRowsChanged();
     }
@@ -1832,6 +1842,8 @@
       showOwnerBar();
     }
 
+    const ON_ACCOUNT_PAGE = /^\/account\/?$/i.test(location.pathname);
+
     function toggleAccount() {
       const panel = document.getElementById('accountPanel');
       panel.hidden = !panel.hidden;
@@ -1845,7 +1857,10 @@
       const close = h('button', null, '✕');
       close.type = 'button';
       close.setAttribute('aria-label', 'Close');
-      close.addEventListener('click', () => { panel.hidden = true; });
+      close.addEventListener('click', () => {
+        panel.hidden = true;
+        if (/^\/account\/?$/i.test(location.pathname)) history.replaceState(null, '', '/');   // a refresh shouldn't reopen it
+      });
       head.append(close);
       const parts = [head];
       const button = (text, cls, onClick) => {
@@ -1991,6 +2006,7 @@
       readUrlAndPlay();
       window.addEventListener('hashchange', readUrlAndPlay);
       window.addEventListener('popstate', readUrlAndPlay);
+      if (ON_ACCOUNT_PAGE) toggleAccount();   // spotiky.com/account: sign in, or see your playlists
     }
 
     // Connect to Spotify's player whether its script finished before this one or finishes later
