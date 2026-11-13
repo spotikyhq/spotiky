@@ -1872,7 +1872,7 @@
       } else {
         parts.push(h('p', null, `Enter the code we sent to ${signIn.email}. It works for 10 minutes.`));
         const input = h('input');
-        Object.assign(input, { id: 'signInCode', inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', maxLength: 7 });
+        Object.assign(input, { id: 'signInCode', inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', maxLength: 7, value: signIn.code || '' });
         input.setAttribute('aria-label', '6-digit code');
         input.addEventListener('keydown', e => { if (e.key === 'Enter') checkCode(); });
         parts.push(input, button('Sign in', null, checkCode));
@@ -1894,14 +1894,24 @@
       const { ok, status, data } = await postWorker('/auth/start', { email: signIn.email });
       if (!ok) return renderAccount(status === 0 ? "Couldn't reach Spotiky. Check your connection." : data.error || "Couldn't send a code. Try again.");
       signIn.step = 'code';
+      signIn.code = '';
       renderAccount(`Code sent. Check your inbox (and spam folder).`, true);
     }
 
+    // Checking the code can take a few seconds the first time (the Worker and its database wake
+    // up), so it says so right away, and extra clicks meanwhile don't spend the one-time code
+    let checkingCode = false;
     async function checkCode() {
-      const code = (document.getElementById('signInCode') || {}).value || '';
-      const { ok, data } = await postWorker('/auth/verify', { email: signIn.email, code });
+      if (checkingCode) return;
+      signIn.code = ((document.getElementById('signInCode') || {}).value || '').trim();
+      if (!/\d/.test(signIn.code)) return renderAccount('Enter the 6-digit code from the email');
+      checkingCode = true;
+      renderAccount('Checking…', true);
+      const { ok, status, data } = await postWorker('/auth/verify', { email: signIn.email, code: signIn.code });
+      checkingCode = false;
       if (!ok) {
-        if (data.expired) signIn.step = 'email';
+        if (data.expired) signIn = { step: 'email', email: signIn.email };
+        if (status === 0) return renderAccount("Couldn't reach Spotiky. Check your connection and press Sign in again.");
         return renderAccount(data.error ? data.error + (data.triesLeft != null ? ` (${data.triesLeft} tries left)` : '') : "Couldn't sign in. Try again.");
       }
       saveSession({ token: data.token, expires: data.expires });
