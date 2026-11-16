@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// A stand-in for Chrome: writes down what it was asked to open
+require('fs').appendFileSync(process.env.FAKE_CHROME_LOG, JSON.stringify(process.argv.slice(2)) + '\n');

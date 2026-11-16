@@ -1,0 +1,5 @@
+# Built copies and test output
+dev/tests/worker/worker.mjs
+*.png
+!og.png
+node_modules/

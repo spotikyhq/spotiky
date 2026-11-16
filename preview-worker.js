@@ -65,6 +65,9 @@ const ID_BLOCK_RE = new RegExp(ID_BLOCK.map(w => [...w].map(ch => LEET[ch] ? `[$
 const EN_RE = /^[a-z]{2,12}(?:-[a-z]{2,12})?$/;
 const MINUTE = 60e3, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
 const CODE_MINUTES = 10, CODE_TRIES = 5, SESSION_DAYS = 30;
+const RENAMES_PER_DAY = 3;     // per playlist, over the last 24 hours
+const MAX_PINNED = 4;          // playlists on an owner's featured shelf
+const NOTE_MAX = 140;          // characters in a liner note
 const stripVS = s => String(s || "").replace(/[︎️]/g, "");   // ❤️ and ❤ are one code
 const stripTones = s => String(s || "").replace(/[\u{1F3FB}-\u{1F3FF}]/gu, "");   // so are 👋🏾 and 👋
 const canon = s => stripTones(stripVS(s));
@@ -665,6 +668,14 @@ const ROUTES = {
   "POST /playlist/suggest": suggestPlaylist,
   "POST /playlist/save": savePlaylist,
   "GET /playlists/mine": myPlaylists,
+  "GET /playlist/history": playlistHistory,
+  "POST /playlist/rename": renamePlaylist,
+  "POST /playlist/shelf": shelvePlaylist,
+  "POST /playlist/delete": deletePlaylist,
+  "POST /playlist/restore": restorePlaylist,
+  "POST /labels": labelsFor,
+  "GET /codes/mine": myCodes,
+  "GET /sets": sets,
   "POST /auth/start": startSignIn,
   "POST /auth/verify": verifySignIn,
   "GET /auth/me": me,
@@ -710,6 +721,18 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, owner TEXT NOT NULL, expires INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sends (key TEXT NOT NULL, at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS sends_by_key ON sends (key, at)`,
+  // A playlist's trail: when it was made, renamed and edited
+  `CREATE TABLE IF NOT EXISTS playlist_history (list TEXT NOT NULL, at TEXT NOT NULL, kind TEXT NOT NULL,
+     detail TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS history_by_list ON playlist_history (list, at)`,
+  // How an owner keeps their playlists: pinned to the featured shelf, in a crate, or deleted
+  `CREATE TABLE IF NOT EXISTS shelf (id TEXT PRIMARY KEY, owner TEXT NOT NULL, pinned TEXT, crate TEXT, deleted TEXT)`,
+  `CREATE INDEX IF NOT EXISTS shelf_by_owner ON shelf (owner)`,
+  // A line of text per song of an owned playlist, shown while it plays
+  `CREATE TABLE IF NOT EXISTS liner_notes (list TEXT PRIMARY KEY, notes TEXT NOT NULL)`,
+  // Song codes saved while signed in: shown in that person's collection, still everyone's to use
+  `CREATE TABLE IF NOT EXISTS namers (code TEXT PRIMARY KEY, owner TEXT NOT NULL, at TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS namers_by_owner ON namers (owner, at)`,
 ];
 
 const notSetUp = () => json({ error: "Codes aren't set up on this Worker yet. It needs its DB binding." }, 503);
@@ -855,6 +878,7 @@ async function claim({ body, env, request }) {
   }
 
   const words = await loadWords();
+  const namer = await signedIn(request, env);   // codes saved while signed in show in that person's collection
   for (let attempt = 0; attempt < 2; attempt++) {
     const at = new Date().toISOString();
     const out = {}, writes = [];
@@ -875,6 +899,7 @@ async function claim({ body, env, request }) {
           .bind(code, script, track, why, at));
       }
     }
+    if (namer) for (const code of Object.values(codes)) writes.push(db.prepare("INSERT INTO namers (code, owner, at) VALUES (?, ?, ?)").bind(code, namer, at));
     try {
       // One transaction: every code is saved, or none is
       await db.batch(writes);
@@ -1118,9 +1143,44 @@ async function getPlaylist({ url, request, env }) {
   if (!env.DB) return notSetUp();
   const id = String(url.searchParams.get("id") || "").toLowerCase();
   if (!PLAYLIST_ID_RE.test(id)) return json({ error: "That isn't a playlist link" }, 400);
-  const row = await env.DB.prepare("SELECT * FROM playlists WHERE id = ?").bind(id).first();
+  const row = await env.DB.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(id).first();
   if (!row) return json({ error: "No playlist has this link" }, 404);
-  return json(playlistReply(row, await signedIn(request, env), true));
+  if (row.deleted) return json({ error: "Its owner deleted this playlist", deleted: true }, 410);
+  const owner = await signedIn(request, env);
+  const reply = playlistReply(row, owner, true);
+  if (reply.mine) reply.renamesLeft = await renamesLeft(env.DB, id);
+  return json(reply);
+}
+
+// A playlist with how its owner keeps it, and its liner notes
+const WITH_SHELF = `SELECT p.*, s.pinned AS pinned, s.crate AS crate, s.deleted AS deleted, n.notes AS liner
+  FROM playlists p LEFT JOIN shelf s ON s.id = p.id LEFT JOIN liner_notes n ON n.list = p.id`;
+
+const parseDetail = d => { try { return JSON.parse(d) || {}; } catch (err) { return {}; } };
+const parseList = v => { try { const a = JSON.parse(v); return Array.isArray(a) ? a : null; } catch (err) { return null; } };
+const labelCodes = stored => {
+  const s = typeof stored === "string" ? JSON.parse(stored) : stored || {};
+  return Object.fromEntries(LABELS.filter(k => s[k] && s[k].code).map(k => [k, s[k].code]));
+};
+const historyRow = (db, list, at, kind, detail) =>
+  db.prepare("INSERT INTO playlist_history (list, at, kind, detail) VALUES (?, ?, ?, ?)").bind(list, at, kind, JSON.stringify(detail));
+const dayAgo = () => new Date(Date.now() - DAY).toISOString();
+
+async function renamesLeft(db, id) {
+  const n = await db.prepare("SELECT COUNT(*) AS n FROM playlist_history WHERE list = ? AND kind = 'rename' AND at > ?").bind(id, dayAgo()).first();
+  return Math.max(0, RENAMES_PER_DAY - ((n && n.n) || 0));
+}
+
+// The owner's own playlist, ready to change: { row } or { reply } with the reason it can't be
+async function ownPlaylist(db, request, env, rawId) {
+  const owner = await signedIn(request, env);
+  if (!owner) return { reply: json({ error: "Sign in to change your playlist" }, 401) };
+  const id = String(rawId || "").toLowerCase();
+  if (!PLAYLIST_ID_RE.test(id)) return { reply: json({ error: "That isn't a playlist link" }, 400) };
+  const row = await db.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(id).first();
+  if (!row) return { reply: json({ error: "No playlist has this link" }, 404) };
+  if (row.owner !== owner) return { reply: json({ error: "Only its owner can change this playlist" }, 403) };
+  return { row, owner };
 }
 
 async function suggestPlaylist({ body, request, env }) {
@@ -1133,7 +1193,7 @@ async function suggestPlaylist({ body, request, env }) {
 
   // Already saved: your own copy when you're signed in, else the shared snapshot
   if (owner) {
-    const own = await db.prepare("SELECT * FROM playlists WHERE owner = ? AND hash = ?").bind(owner, hash).first();
+    const own = await db.prepare(`${WITH_SHELF} WHERE p.owner = ? AND p.hash = ? AND s.deleted IS NULL`).bind(owner, hash).first();
     if (own) return json(playlistReply(own, owner));
   }
   const snap = await db.prepare("SELECT * FROM playlists WHERE owner IS NULL AND hash = ?").bind(hash).first();
@@ -1166,25 +1226,29 @@ async function suggestPlaylist({ body, request, env }) {
 async function savePlaylist({ body, request, env }) {
   if (!env.DB) return notSetUp();
   const db = env.DB;
-  const owner = await signedIn(request, env);
   const items = cleanItems(body && body.items);
   if (!items) return json({ error: "Send the playlist's songs" }, 400);
   const hash = await fingerprint(items);
   const at = new Date().toISOString();
 
-  // An owner changing their playlist: the songs (and labels, if sent) change, the link stays
+  // An owner changing their playlist's songs (and liner notes): the link stays.
+  // Its labels change only through /playlist/rename, which has a daily limit.
   if (body.edit) {
-    if (!owner) return json({ error: "Sign in to change your playlist" }, 401);
-    const row = await db.prepare("SELECT * FROM playlists WHERE id = ?").bind(String(body.edit).toLowerCase()).first();
-    if (!row) return json({ error: "No playlist has this link" }, 404);
-    if (row.owner !== owner) return json({ error: "Only its owner can change this playlist" }, 403);
-    const labels = body.labels ? cleanLabels(body.labels) : null;
-    if (labels && labels.error) return json(labels, 400);
-    await db.prepare("UPDATE playlists SET items = ?, hash = ?, labels = ?, why = ?, updated = ? WHERE id = ? AND owner = ?")
-      .bind(items, hash, labels ? JSON.stringify(labels.stored) : row.labels, labels ? labels.why || row.why : row.why, at, row.id, owner).run();
-    return json(playlistReply(await db.prepare("SELECT * FROM playlists WHERE id = ?").bind(row.id).first(), owner));
+    const { row, owner, reply } = await ownPlaylist(db, request, env, body.edit);
+    if (reply) return reply;
+    if (row.deleted) return json({ error: "This playlist is deleted. Restore it first.", deleted: true }, 410);
+    const notes = body.notes === undefined ? null : cleanNotes(body.notes, items);
+    if (notes && notes.error) return json(notes, 400);
+    const writes = [db.prepare("UPDATE playlists SET items = ?, hash = ?, updated = ? WHERE id = ? AND owner = ?").bind(items, hash, at, row.id, owner)];
+    if (notes) writes.push(notesWrite(db, row.id, notes.notes));
+    else if (items !== row.items) writes.push(db.prepare("DELETE FROM liner_notes WHERE list = ?").bind(row.id));   // they were for other songs
+    if (items !== row.items) writes.push(historyRow(db, row.id, at, "edit", { songs: items.split(",").length }));
+    await db.batch(writes);
+    const saved = await db.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(row.id).first();
+    return json({ ...playlistReply(saved, owner, true), renamesLeft: await renamesLeft(db, row.id) });
   }
 
+  const owner = await signedIn(request, env);
   if (!(await allow(db, "save:" + (await ipKey(request, env)), 60, HOUR))) {
     return json({ error: "Too many playlists saved from here. Try again in a while." }, 429);
   }
@@ -1193,14 +1257,17 @@ async function savePlaylist({ body, request, env }) {
   const row = { items, hash, labels: JSON.stringify(labels.stored), why: labels.why, created: at, updated: at };
 
   if (owner) {
-    const own = await db.prepare("SELECT * FROM playlists WHERE owner = ? AND hash = ?").bind(owner, hash).first();
+    const own = await db.prepare(`${WITH_SHELF} WHERE p.owner = ? AND p.hash = ? AND s.deleted IS NULL`).bind(owner, hash).first();
     if (own) return json(playlistReply(own, owner));
+    const notes = body.notes === undefined ? null : cleanNotes(body.notes, items);
+    if (notes && notes.error) return json(notes, 400);
     const shown = typeof body.id === "string" && typeof body.idSig === "string"
       && sameText(body.idSig, await keyed(env, `pid:${owner}:${body.id}`)) ? [body.id] : [];
-    const id = await insertPlaylist(db, { ...row, owner }, withFirst(shown, randomIds()));
-    return json(playlistReply({ ...row, id, owner }, owner));
+    const id = await insertPlaylist(db, { ...row, owner }, withFirst(shown, randomIds()), notes && notes.notes);
+    const saved = await db.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(id).first();
+    return json({ ...playlistReply(saved, owner), renamesLeft: RENAMES_PER_DAY });
   }
-  // A snapshot: first come, first served, like song codes
+  // A snapshot: first come, first served, like song codes. Snapshots have no liner notes.
   const snap = await db.prepare("SELECT * FROM playlists WHERE owner IS NULL AND hash = ?").bind(hash).first();
   if (snap) return json(playlistReply(snap, null));
   const id = await insertPlaylist(db, { ...row, owner: null }, snapshotIds(items, hash));
@@ -1216,17 +1283,28 @@ async function myPlaylists({ request, env }) {
   if (!env.DB) return notSetUp();
   const owner = await signedIn(request, env);
   if (!owner) return json({ error: "Sign in to see your playlists" }, 401);
-  const rows = (await env.DB.prepare("SELECT * FROM playlists WHERE owner = ? ORDER BY updated DESC LIMIT 100").bind(owner).all()).results;
-  return json({ playlists: rows.map(r => playlistReply(r, owner, true)) });
+  const rows = (await env.DB.prepare(`SELECT p.*, s.pinned AS pinned, s.crate AS crate, n.notes AS liner,
+      (SELECT COUNT(*) FROM playlist_history h WHERE h.list = p.id AND h.kind = 'rename' AND h.at > ?) AS renames
+    FROM playlists p LEFT JOIN shelf s ON s.id = p.id LEFT JOIN liner_notes n ON n.list = p.id
+    WHERE p.owner = ? AND s.deleted IS NULL ORDER BY p.updated DESC LIMIT 300`).bind(dayAgo(), owner).all()).results;
+  const playlists = rows.map(r => ({ ...playlistReply(r, owner, true), renamesLeft: Math.max(0, RENAMES_PER_DAY - r.renames) }));
+  const crates = [...new Set(playlists.map(p => p.crate).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return json({ playlists, crates, maxPinned: MAX_PINNED, renamesPerDay: RENAMES_PER_DAY });
 }
 
 // Saves a playlist under the first free ID it's offered; returns the ID, or null when the
 // same snapshot was saved a moment ago
-async function insertPlaylist(db, row, ids) {
+async function insertPlaylist(db, row, ids, notes) {
   for await (const id of ids) {
+    const writes = [db.prepare("INSERT INTO playlists (id, items, hash, owner, labels, why, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, row.items, row.hash, row.owner, row.labels, row.why || "", row.created, row.updated)];
+    if (row.owner) {
+      const s = JSON.parse(row.labels);
+      writes.push(historyRow(db, id, row.created, "born", { labels: labelCodes(s), typed: s._typed || [] }));
+      if (notes) writes.push(notesWrite(db, id, notes));
+    }
     try {
-      await db.prepare("INSERT INTO playlists (id, items, hash, owner, labels, why, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(id, row.items, row.hash, row.owner, row.labels, row.why || "", row.created, row.updated).run();
+      await db.batch(writes);   // all or nothing
       return id;
     } catch (err) {
       if (!isConflict(err)) throw err;
@@ -1303,7 +1381,264 @@ function cleanLabels(given) {
     why = why || text(g.why, 90);
   }
   if (!Object.keys(stored).length) return { error: "Send at least one label" };
+  // The labels the person wrote themselves, shown in quotes like a name tag on a weapon
+  const typed = Array.isArray(given.typed) ? LABELS.filter(k => given.typed.includes(k) && stored[k]) : [];
+  if (typed.length) stored._typed = typed;
   return { stored, why };
+}
+
+// Liner notes as sent: one per song, in order -> { notes } (null when all are empty) or { error, note }
+function cleanNotes(value, items) {
+  const count = items.split(",").length;
+  if (!Array.isArray(value) || value.length !== count) return { error: "Send one note per song" };
+  const notes = [];
+  for (let i = 0; i < value.length; i++) {
+    const v = typeof value[i] === "string" ? value[i] : "";
+    // no control or direction-changing characters; spaces squeezed
+    const note = v.replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim();
+    if ([...note].length > NOTE_MAX) return { error: `Note ${i + 1} is longer than ${NOTE_MAX} characters`, note: i };
+    const words = note.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+    const pairs = words.slice(1).map((w, k) => words[k] + "-" + w);
+    if ([...words, ...pairs].some(w => EN_BLOCK.has(w))) return { error: `Note ${i + 1} uses a word Spotiky doesn't use`, note: i };
+    notes.push(note);
+  }
+  return { notes: notes.some(Boolean) ? notes : null };
+}
+
+const notesWrite = (db, id, notes) => notes
+  ? db.prepare("INSERT INTO liner_notes (list, notes) VALUES (?, ?) ON CONFLICT (list) DO UPDATE SET notes = excluded.notes").bind(id, JSON.stringify(notes))
+  : db.prepare("DELETE FROM liner_notes WHERE list = ?").bind(id);
+
+// ---- Naming: a label or code the person typed themselves ---------------------------------
+// POST /labels { fixed: {en: "night-drive", zh: "夜歌"}, items | id | track, match }
+// Checks what they typed; with match, the AI writes the other kinds to mean the same, each with
+// a couple of whole alternatives to reroll through.
+async function labelsFor({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const track = body && typeof body.track === "string" && ID_RE.test(body.track) ? body.track : null;
+  const kindsHere = track ? SCRIPTS : LABELS;   // songs have no English codes
+  const fixed = {};
+  for (const k of kindsHere) {
+    const g = body && body.fixed && body.fixed[k];
+    if (typeof g !== "string" || !g.trim()) continue;
+    const code = k === "en" ? cleanEnglish(g) : k === "em" ? canon(g).replace(/\s+/g, "") : g.replace(/\s+/g, "");
+    const p = problem(k, code);
+    if (p) return json({ error: p, kind: k, code }, 400);
+    fixed[k] = code;
+  }
+  if (!Object.keys(fixed).length) return json({ error: "Type a label first" }, 400);
+  const words = await loadWords();
+  const out = {};
+  for (const [k, code] of Object.entries(fixed)) out[k] = describeTyped(k, code, words);
+  if (!body.match) return json({ labels: out });
+
+  // Matching the other kinds is an AI call
+  if (!(await allow(db, "name:" + (await ipKey(request, env)), 60, HOUR))) {
+    return json({ error: "A lot of naming from here just now. Try again in a while." }, 429);
+  }
+  if (!env.AI) return json({ error: "Code suggestions aren't set up on this Worker yet" }, 503);
+  let items = track ? null : cleanItems(body && body.items);
+  if (!track && !items && typeof body.id === "string" && PLAYLIST_ID_RE.test(body.id.toLowerCase())) {
+    const row = await db.prepare("SELECT items FROM playlists WHERE id = ?").bind(body.id.toLowerCase()).first();
+    if (row) items = row.items;
+  }
+  if (!track && !items) return json({ error: "Send the playlist's songs" }, 400);
+  const songs = await songsFor(track || items, db);
+  if (!songs.length) return json({ error: "Couldn't read these songs from Spotify. Try again in a moment." }, 502);
+  const wanted = kindsHere.filter(k => !fixed[k]);
+  const built = await askForMatches(env, songs, !track, fixed, out, wanted, words);
+  for (const k of wanted) {
+    if (!built[k] || !built[k].cands.length) continue;
+    const [first, ...rest] = built[k].cands;
+    out[k] = { ...withOptions(first, built[k], false), saved: false, matched: true,
+      alternates: rest.slice(0, 3).map(c => ({ ...withOptions(c, built[k], false), saved: false, matched: true })) };
+  }
+  if (!wanted.some(k => out[k])) return json({ error: "Couldn't come up with matching labels. Try again." }, 502);
+  const why = wanted.map(k => out[k] && out[k].why).find(Boolean) || "";
+  return json({ labels: out, why });
+}
+
+// What a typed label looks like on a card: its characters named from our own lists
+function describeTyped(k, code, words) {
+  const chars = k === "zh" ? [...code].map(ch => ({ char: ch, meaning: "" }))
+    : k === "eg" ? [...code].map(glyphChar)
+    : k === "em" ? [...code].map(emojiChar)
+    : code.split("-").map(wordChar);
+  const d = { code, chars, saved: false, typed: true, why: "" };
+  if (k === "zh") d.word = wordFor(code, words) || null;
+  return d;
+}
+
+// Suggestions for the kinds the person didn't write, matched to the one they did
+async function askForMatches(env, songs, isPlaylist, fixed, described, kinds, words) {
+  const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji, en: readEnglish };
+  const prompt = buildMatchPrompt(songs, isPlaylist, fixed, kinds);
+  const built = Object.fromEntries(kinds.map(s => [s, { cands: [], alts: [] }]));
+  for (let attempt = 0; attempt < 2 && kinds.some(s => !built[s].cands.length); attempt++) {
+    const ai = await askAI(env, prompt, 1500);
+    for (const s of kinds) if (!built[s].cands.length) built[s] = readers[s](ai);
+    // The person's own Chinese characters get their meanings from the same answer
+    if (ai && fixed.zh && described.zh && Array.isArray(ai.fixed_chars)) {
+      for (const c of described.zh.chars) {
+        const hit = ai.fixed_chars.find(f => f && f.char === c.char && typeof f.meaning === "string");
+        if (hit && !c.meaning) c.meaning = text(hit.meaning, 30);
+      }
+    }
+  }
+  return built;
+}
+
+const KIND_NAMES = { zh: "Chinese", eg: "hieroglyph", em: "emoji", en: "English" };
+
+function buildMatchPrompt(songs, isPlaylist, fixed, kinds) {
+  const what = isPlaylist ? "playlist" : "song";
+  const subject = isPlaylist
+    ? `a playlist of these songs:\n${songs.map((s, i) => `${i + 1}. ${songLabel(s)}`).join("\n")}`
+    : `the song ${songLabel(songs[0])}`;
+  const chosen = Object.entries(fixed).map(([k, code]) => `${KIND_NAMES[k]} "${code}"`).join(" and ");
+  const parts = [];
+  if (kinds.includes("zh")) parts.push(`Chinese: give 3 different codes. Each is 2 common Simplified Chinese characters that read naturally to a Chinese speaker, as a real word or a poetic pair. Avoid slang, rude, unlucky or political readings. Give each character a short English meaning.`);
+  if (kinds.includes("eg")) parts.push(`Hieroglyphs: give 3 different codes. Each is 2 signs taken only from this list (sign, name: meaning):\n${GLYPHS.map(g => `${g.c} ${g.name}: ${g.meaning}`).join("\n")}`);
+  if (kinds.includes("em")) parts.push(`Emoji: give 3 different codes. Each is 2 emoji, taken only from this list. Leave people and hands in their default color with no skin tone.\n${EMOJI.map(x => x.e).join("")}`);
+  if (kinds.includes("en")) parts.push(`English: give 3 different labels. Each is one or two common English words in lowercase, joined by a hyphen when there are two (like "night-drive").`);
+  const shapes = [];
+  if (kinds.includes("zh")) shapes.push(`"zh":[{"code":"..","chars":[{"char":"..","meaning":".."},{"char":"..","meaning":".."}],"word":null,"why":".."}],\n"zh_alts":[[{"char":"..","meaning":".."}],[{"char":"..","meaning":".."}]]`);
+  if (kinds.includes("eg")) shapes.push(`"eg":[{"code":"..","why":".."}],\n"eg_alts":[["..",".."],["..",".."]]`);
+  if (kinds.includes("em")) shapes.push(`"em":[{"code":"..","why":".."}],\n"em_alts":[["..",".."],["..",".."]]`);
+  if (kinds.includes("en")) shapes.push(`"en":[{"code":"..","why":".."}],\n"en_alts":[["..",".."],["..",".."]]`);
+  if (fixed.zh) shapes.push(`"fixed_chars":[{"char":"..","meaning":".."},{"char":"..","meaning":".."}]`);
+  return `The person sharing ${subject} named it themselves: their label is ${chosen}.
+
+Make codes in the other kinds below that mean what their label means, fitted to the ${what}. Capture the same image or feeling, not a translation word by word, and never quote lyrics.
+
+${parts.join("\n\n")}
+
+For every kind, also give 4 alternatives for each position of your first code: characters, signs, emoji or words that would also fit in that spot.
+Write each "why" as one short English line, under 12 words, linking their label to the ${what}.${fixed.zh ? `\nAlso give a short English meaning for each character of their Chinese label ${fixed.zh}, as "fixed_chars".` : ""}
+
+Reply with JSON only, in exactly this shape:
+{${shapes.join(",\n")}}
+/no_think`;
+}
+
+// ---- Your collection: renaming, the shelf, deleting ------------------------------------------
+
+// POST /playlist/rename { id, labels, typed }: new labels for an owner's playlist, a few times a
+// day. Its ID and links stay; an old label in a link still opens it.
+async function renamePlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const { row, owner, reply } = await ownPlaylist(db, request, env, body && body.id);
+  if (reply) return reply;
+  if (row.deleted) return json({ error: "This playlist is deleted. Restore it first.", deleted: true }, 410);
+  const labels = cleanLabels({ ...((body && body.labels) || {}), typed: body && body.typed });
+  if (labels.error) return json(labels, 400);
+  const before = typeof row.labels === "string" ? JSON.parse(row.labels) : row.labels;
+  const left = await renamesLeft(db, row.id);
+  const same = JSON.stringify(labelCodes(before)) === JSON.stringify(labelCodes(labels.stored))
+    && JSON.stringify(before._typed || []) === JSON.stringify(labels.stored._typed || []);
+  if (same) return json({ ...playlistReply(row, owner, true), renamesLeft: left, unchanged: true });
+  if (left <= 0) {
+    const first = await db.prepare("SELECT MIN(at) AS at FROM playlist_history WHERE list = ? AND kind = 'rename' AND at > ?").bind(row.id, dayAgo()).first();
+    const nextAt = first && first.at ? new Date(Date.parse(first.at) + DAY).toISOString() : null;
+    return json({ error: `You've renamed this playlist ${RENAMES_PER_DAY} times today. Try again tomorrow.`, renamesLeft: 0, nextAt }, 429);
+  }
+  // Chinese meanings the person didn't send stay from before, when the characters are the same
+  if (labels.stored.zh && before.zh && labels.stored.zh.code === before.zh.code) {
+    labels.stored.zh.chars = labels.stored.zh.chars.map((c, i) => c.meaning ? c : { ...c, meaning: (before.zh.chars && before.zh.chars[i] && before.zh.chars[i].meaning) || "" });
+  }
+  const at = new Date().toISOString();
+  await db.batch([
+    db.prepare("UPDATE playlists SET labels = ?, why = ?, updated = ? WHERE id = ? AND owner = ?")
+      .bind(JSON.stringify(labels.stored), labels.why || row.why || "", at, row.id, owner),
+    historyRow(db, row.id, at, "rename", { from: labelCodes(before), to: labelCodes(labels.stored), typed: labels.stored._typed || [] }),
+  ]);
+  const saved = await db.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(row.id).first();
+  return json({ ...playlistReply(saved, owner, true), renamesLeft: left - 1 });
+}
+
+// POST /playlist/shelf { id, pinned?, crate? }: pin to the featured shelf, or move into a crate
+async function shelvePlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const db = env.DB;
+  const { row, owner, reply } = await ownPlaylist(db, request, env, body && body.id);
+  if (reply) return reply;
+  if (row.deleted) return json({ error: "This playlist is deleted. Restore it first.", deleted: true }, 410);
+  let pinned = row.pinned || null, crate = row.crate || null;
+  if (body.pinned === true && !pinned) {
+    const n = await db.prepare("SELECT COUNT(*) AS n FROM shelf WHERE owner = ? AND pinned IS NOT NULL AND deleted IS NULL").bind(owner).first();
+    if (n && n.n >= MAX_PINNED) return json({ error: `Your featured shelf holds ${MAX_PINNED}. Unpin one first.`, full: true }, 409);
+    pinned = new Date().toISOString();
+  } else if (body.pinned === false) {
+    pinned = null;
+  }
+  if (body.crate !== undefined) {
+    crate = typeof body.crate === "string"
+      ? body.crate.replace(/[\u0000-\u001f\u007f‎‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, 24) || null
+      : null;
+  }
+  await shelfWrite(db, row.id, owner, pinned, crate, null).run();
+  return json({ id: row.id, pinned: !!pinned, crate });
+}
+
+const shelfWrite = (db, id, owner, pinned, crate, deleted) =>
+  db.prepare(`INSERT INTO shelf (id, owner, pinned, crate, deleted) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET pinned = excluded.pinned, crate = excluded.crate, deleted = excluded.deleted`)
+    .bind(id, owner, pinned, crate, deleted);
+
+// POST /playlist/delete { id }: it leaves the collection and its links stop working. The ID is
+// never given to another playlist, so /playlist/restore can bring it back as it was.
+async function deletePlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const { row, owner, reply } = await ownPlaylist(env.DB, request, env, body && body.id);
+  if (reply) return reply;
+  await shelfWrite(env.DB, row.id, owner, null, row.crate || null, row.deleted || new Date().toISOString()).run();
+  return json({ id: row.id, deleted: true });
+}
+
+async function restorePlaylist({ body, request, env }) {
+  if (!env.DB) return notSetUp();
+  const { row, owner, reply } = await ownPlaylist(env.DB, request, env, body && body.id);
+  if (reply) return reply;
+  await shelfWrite(env.DB, row.id, owner, null, row.crate || null, null).run();
+  const saved = await env.DB.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(row.id).first();
+  return json({ ...playlistReply(saved, owner, true), renamesLeft: await renamesLeft(env.DB, row.id) });
+}
+
+// GET /playlist/history?id=: when it was made, renamed and edited. Anyone can see a playlist's trail.
+async function playlistHistory({ url, env }) {
+  if (!env.DB) return notSetUp();
+  const id = String(url.searchParams.get("id") || "").toLowerCase();
+  if (!PLAYLIST_ID_RE.test(id)) return json({ error: "That isn't a playlist link" }, 400);
+  const row = await env.DB.prepare(`${WITH_SHELF} WHERE p.id = ?`).bind(id).first();
+  if (!row) return json({ error: "No playlist has this link" }, 404);
+  if (row.deleted) return json({ error: "Its owner deleted this playlist", deleted: true }, 410);
+  const rows = (await env.DB.prepare("SELECT at, kind, detail FROM playlist_history WHERE list = ? ORDER BY at DESC, rowid DESC LIMIT 50").bind(id).all()).results;
+  return json({ id, created: row.created, history: rows.map(h => ({ at: h.at, kind: h.kind, ...parseDetail(h.detail) })) });
+}
+
+// GET /codes/mine: the song codes this person saved while signed in
+async function myCodes({ request, env }) {
+  if (!env.DB) return notSetUp();
+  const owner = await signedIn(request, env);
+  if (!owner) return json({ error: "Sign in to see your codes" }, 401);
+  const rows = (await env.DB.prepare(`SELECT c.code, c.script, c.track, c.chars, c.word, c.why, n.at
+    FROM namers n JOIN song_codes c ON c.code = n.code WHERE n.owner = ? ORDER BY n.at DESC LIMIT 500`).bind(owner).all()).results;
+  return json({
+    codes: rows.map(r => ({
+      code: r.code, script: r.script, track: r.track, at: r.at, why: r.why || "", word: r.word || null,
+      chars: r.script === "zh" ? parseChars(r.chars, r.code) : [...r.code].map(r.script === "eg" ? glyphChar : emojiChar),
+    })),
+  });
+}
+
+// GET /sets: the hieroglyph signs and emoji codes and labels can use, for the pickers
+async function sets() {
+  return json({
+    glyphs: GLYPHS.map(g => ({ c: g.c, name: g.name, meaning: g.meaning })),
+    emoji: EMOJI.map(x => ({ e: x.e, name: x.name, toneable: TONEABLE.has(x.e) })),
+  }, 200, { "Cache-Control": "public, max-age=86400" });
 }
 
 function describeLabels(stored) {
@@ -1321,15 +1656,28 @@ function describeLabels(stored) {
 }
 
 function playlistReply(row, owner, withItems) {
+  const stored = typeof row.labels === "string" ? JSON.parse(row.labels) : row.labels;
+  const mine = !!owner && row.owner === owner;
   const reply = {
     id: row.id,
-    labels: describeLabels(typeof row.labels === "string" ? JSON.parse(row.labels) : row.labels),
+    labels: describeLabels(stored),
+    typed: (stored && stored._typed) || [],
     why: row.why || "",
     saved: true,
-    mine: !!owner && row.owner === owner,
+    mine,
     owned: !!row.owner,
+    created: row.created,
+    updated: row.updated,
   };
-  if (withItems) reply.items = row.items;
+  if (withItems) {
+    reply.items = row.items;
+    const notes = row.liner ? parseList(row.liner) : null;
+    if (notes && notes.length === row.items.split(",").length) reply.notes = notes;
+  }
+  if (mine) {
+    reply.pinned = !!row.pinned;
+    reply.crate = row.crate || null;
+  }
   return reply;
 }
 

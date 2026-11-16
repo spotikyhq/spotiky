@@ -109,6 +109,20 @@
     .my-lists a { color: #1DB954; text-decoration: none; }
     .owner-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #15291c; border: 1px solid #1f5a33; border-radius: 10px; padding: 8px 10px; margin: 0 0 12px; font-size: 0.85rem; color: #cfe9d6; }
     .owner-bar button { width: auto; flex: none; }
+    .owner-bar .bar-btns { display: flex; gap: 6px; flex: none; }
+    .draft-bar { background: #2a2414; border-color: #6b5a24; color: #f1e3b4; }
+    .panel-link { display: inline-block; color: #1DB954; font-weight: 600; text-decoration: none; margin: 0 0 10px; }
+    /* Liner notes: a line per song that shows while it plays */
+    .row .add-note { grid-column: 2; justify-self: start; width: auto; margin: 2px 0 0; padding: 2px 4px; background: none; color: #8a8a8a; font-size: 0.75rem; font-weight: 500; }
+    .row .add-note:hover { background: none; color: #fff; }
+    .row textarea.note { grid-column: 2; width: 100%; margin: 4px 0 0; padding: 7px 10px; resize: none; border: none; border-radius: 6px; background: #1d1d1d;
+                         color: #cfe9d6; font: inherit; font-size: 0.85rem; line-height: 1.35; }
+    .row textarea.note:focus { outline: 2px solid #1DB954; }
+    .row .note-view { grid-column: 2; font-size: 0.8rem; color: #cfe9d6; padding: 2px 2px 0; font-style: italic; }
+    .liner { margin: 2px 0 0; font-size: 0.9rem; color: #cfe9d6; font-style: italic; }
+    .name-row { display: flex; flex-wrap: wrap; gap: 8px; margin: -4px 0 12px; }
+    .name-row button { width: auto; margin: 0; }
+    .yours { margin-left: 6px; padding: 0 6px; border-radius: 99px; background: #15291c; color: #8ee0a8; text-transform: none; letter-spacing: 0; font-size: 0.7rem; }
     .owner-bar button:disabled { opacity: 0.5; cursor: default; }
     .share-id { font-size: 0.85rem; color: #b3b3b3; margin: -2px 0 10px; }
     /* a playlist's emoji (names, skin tones) and English (words) labels get whole rows */
@@ -249,6 +263,7 @@
          page this whole block moves under that page's Play buttons. -->
     <div id="playerBlock">
       <div id="status">Waiting for player…</div>
+      <div id="linerNote" class="liner" hidden></div>
       <button id="replayBtn" class="secondary" hidden></button>
 
       <div id="loginPrompt" class="notice" hidden>
@@ -277,9 +292,19 @@
       <br><a id="spotifyPlaylistLink" target="_blank" rel="noopener">Open on Spotify</a>
     </div>
 
+    <div id="draftBar" class="owner-bar draft-bar" hidden>
+      <span id="draftText"></span>
+      <span class="bar-btns">
+        <button class="small" type="button" onclick="restoreDraft()">Restore</button>
+        <button class="small" type="button" onclick="discardDraft()">Discard</button>
+      </span>
+    </div>
     <div id="ownerBar" class="owner-bar" hidden>
       <span>Your playlist. Saving keeps its links the same.</span>
-      <button id="saveListBtn" class="small" type="button" onclick="saveOwnedPlaylist()" disabled>Save changes</button>
+      <span class="bar-btns">
+        <button id="renameListBtn" class="small" type="button" onclick="renameOwnedPlaylist()">Rename</button>
+        <button id="saveListBtn" class="small" type="button" onclick="saveOwnedPlaylist()" disabled>Save changes</button>
+      </span>
     </div>
     <div class="label">Songs</div>
     <div id="rows"></div>
@@ -296,6 +321,9 @@
     </div>
   </section>
 
+  <!-- spotiky.com/account: your playlists, the codes you named and your clips (collection.js) -->
+  <section id="collectionView" hidden></section>
+
   <div id="sharePanel" class="share" hidden></div>
 
 
@@ -303,7 +331,7 @@
     const PREVIEW_WORKER = "https://spotiky-preview.spotikyhq.workers.dev";
     const SHARE_BASE = "https://open.spotiky.com";   // track links mirror open.spotify.com
     const SITE_BASE = "https://spotiky.com";         // playlist and code links don't need open.
-    const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : 'track';
+    const view = /^\/playlist(\/|$)/i.test(location.pathname) ? 'playlist' : /^\/account\/?$/i.test(location.pathname) ? 'account' : 'track';
     // The player goes under the page's own Play buttons: on the playlist page, under Play playlist
     if (view === 'playlist') document.getElementById('plControls').after(document.getElementById('playerBlock'));
 
@@ -1023,9 +1051,18 @@
       row.innerHTML = '<span class="num" title="Play from this song"></span>'
         + '<input autocomplete="off" enterkeyhint="next" placeholder="Paste a song link or Spotiky code">'
         + '<button class="remove" type="button" title="Remove" aria-label="Remove song">✕</button>'
-        + '<div class="info"></div>';
+        + '<div class="info"></div>'
+        + '<button class="add-note" type="button" hidden>+ Liner note</button>'
+        + '<textarea class="note" rows="1" maxlength="140" hidden placeholder="Liner note: shows while this song plays" aria-label="Liner note"></textarea>'
+        + '<div class="note-view" hidden></div>';
+      row.note = '';
       const input = row.querySelector('input');
       input.value = value;
+      const noteBox = row.querySelector('textarea.note');
+      row.querySelector('.add-note').addEventListener('click', () => { row.noteOpen = true; refreshNote(row); noteBox.focus(); });
+      noteBox.addEventListener('input', () => { row.note = noteBox.value.replace(/\n/g, ' '); showOwnerBar(); keepDraft(); });
+      noteBox.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+      noteBox.addEventListener('blur', () => { if (!row.note.trim()) { row.noteOpen = false; refreshNote(row); } });
       input.addEventListener('paste', onRowPaste);
       input.addEventListener('input', onRowInput);
       input.addEventListener('change', () => tidyRow(row));
@@ -1049,6 +1086,93 @@
       if (item.code) { lookupRowCode(row, item); return; }
       showRowSong(row, item);
     }
+
+    // ---- Liner notes: one line per song of your own playlist, shown while it plays ------------
+    // You write them on your playlists (and on a new one while signed in); everyone else reads them.
+    const notesEditable = () => view === 'playlist' && !!session && (!listLink || listLink.mine);
+    function refreshNote(row) {
+      const edit = notesEditable(), song = !!row.item, has = !!(row.note && row.note.trim());
+      row.querySelector('.add-note').hidden = !(edit && song && !has && !row.noteOpen);
+      const box = row.querySelector('textarea.note');
+      box.hidden = !(edit && song && (has || row.noteOpen));
+      if (box.value !== row.note) box.value = row.note;
+      const shown = row.querySelector('.note-view');
+      shown.hidden = edit || !song || !has;
+      shown.textContent = has ? '♪ ' + row.note.trim() : '';
+    }
+    // In the same order as rowsList()'s songs
+    const currentNotes = () => [...rowsEl.children].filter(r => r.item && !r.item.list).map(r => (r.note || '').replace(/\s+/g, ' ').trim());
+    function notesChanged() {
+      if (!listLink || listChanged()) return false;   // with other songs, Save is on anyway
+      const was = listLink.notes || [];
+      return currentNotes().some((n, i) => n !== (was[i] || ''));
+    }
+    function setRowNotes(notes) {
+      const rows = [...rowsEl.children].filter(r => r.item);
+      rows.forEach((r, i) => { r.note = (notes && notes[i]) || ''; r.noteOpen = false; refreshNote(r); });
+    }
+    function showLinerNote(row) {
+      const box = document.getElementById('linerNote');
+      const note = row && row.note ? row.note.trim() : '';
+      box.hidden = !note;
+      box.textContent = note ? '♪ ' + note : '';
+    }
+
+    // ---- Drafts: unsaved changes are kept in this browser until they're saved or discarded -------
+    const DRAFTS_KEY = 'spotiky-drafts';
+    function readDrafts() {
+      try {
+        const d = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}');
+        return d && typeof d === 'object' && !Array.isArray(d) ? d : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    function setDraft(key, value) {
+      try {
+        const d = readDrafts();
+        if (value) d[key] = value; else delete d[key];
+        localStorage.setItem(DRAFTS_KEY, JSON.stringify(d));
+      } catch (e) {}
+    }
+    let draftKey = null;     // the draft this page keeps: your playlist's ID, or 'new' on the blank playlist maker
+    let draftOffer = null;   // { key, draft } shown in the bar, not restored or discarded yet
+    function keepDraft() {
+      if (view !== 'playlist' || !draftKey || draftOffer) return;
+      if (draftKey === 'new') {
+        const items = rowsList();
+        setDraft('new', items ? { items, notes: currentNotes(), at: Date.now() } : null);
+      } else if (listLink && listLink.mine && listLink.id === draftKey) {
+        setDraft(draftKey, listChanged() || notesChanged() ? { items: rowsList(), notes: currentNotes(), at: Date.now() } : null);
+      }
+    }
+    function offerDraft(key, draft, text) {
+      draftOffer = { key, draft };
+      document.getElementById('draftText').textContent = text;
+      document.getElementById('draftBar').hidden = false;
+    }
+    function restoreDraft() {
+      if (!draftOffer) return;
+      const { draft } = draftOffer;
+      draftOffer = null;
+      document.getElementById('draftBar').hidden = true;
+      rowsEl.replaceChildren();
+      for (const piece of splitLinks(draft.items)) tidyRow(addRow(piece));
+      setRowNotes(draft.notes);
+      addRow('');
+      onRowsChanged();
+      setStatus('Restored your unsaved changes');
+    }
+    function discardDraft() {
+      if (!draftOffer) return;
+      setDraft(draftOffer.key, null);
+      draftOffer = null;
+      document.getElementById('draftBar').hidden = true;
+      keepDraft();
+    }
+    const draftTime = at => { try { return new Date(at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }); } catch (e) { return 'earlier'; } };
+    const sameNotes = (a, b) => JSON.stringify((a || []).map(x => x || '')) === JSON.stringify((b || []).map(x => x || ''))
+      || (!(a || []).some(Boolean) && !(b || []).some(Boolean));
 
     function failRow(row, item, text) {
       const info = row.querySelector('.info');
@@ -1102,6 +1226,7 @@
       for (const row of rowsEl.children) row.querySelector('.num').textContent = row.item && !row.item.missing ? ++n : '';
       history.replaceState(null, '', currentListPath());
       showOwnerBar();
+      keepDraft();
     }
 
     // A saved playlist keeps its short link until its songs change
@@ -1118,7 +1243,7 @@
     function expandListRow(row, item, rec) {
       const pieces = splitLinks(rec.items);
       const onlyRow = [...rowsEl.children].filter(r => r.item).length === 1;
-      if (onlyRow) listLink = { id: rec.id, label: rec.label, items: rec.items, labels: rec.labels, mine: !!rec.mine };
+      if (onlyRow) listLink = { id: rec.id, label: rec.label, items: rec.items, labels: rec.labels, mine: !!rec.mine, typed: rec.typed || [], notes: rec.notes || null, renamesLeft: rec.renamesLeft };
       let last = row;
       pieces.forEach((p, i) => {
         if (i === 0) {
@@ -1273,6 +1398,7 @@
       pl.index = Math.max(0, i);
       const { row, item } = pl.entries[pl.index];
       markPlaying(row);
+      showLinerNote(row);
       document.getElementById('plControls').hidden = false;
       startClip(item.id, item.start, item.end, {
         playlist: true,
@@ -1300,6 +1426,7 @@
     function stopPlaylist() {
       pl.active = false;
       markPlaying(null);
+      showLinerNote(null);
       document.getElementById('plControls').hidden = true;
     }
 
@@ -1320,6 +1447,7 @@
 
       const list = decodeSafe(location.pathname).replace(/^\/playlist\/?/i, '').replace(/\/+$/, '');
       const shareNow = location.hash === '#share';   // sent here by Share as a code on the song page
+      const playNow = location.hash === '#play';     // sent here by Play in your collection
       if (/^[a-zA-Z0-9]{22}$/.test(list)) {
         // A real Spotify playlist ID (f→k swap): supported in a later version
         document.getElementById('spotifyPlaylistLink').href = `https://open.spotify.com/playlist/${list}`;
@@ -1328,29 +1456,50 @@
         return;
       }
       const link = parsePlaylistLink(list);
-      if (link) return openPlaylistLink(link, shareNow);
+      if (link) return openPlaylistLink(link, shareNow, playNow);
       for (const piece of splitLinks(list)) addRow(piece);
       addRow('');   // an empty row, ready for pasting
+      if (!list) {   // the blank playlist maker keeps a draft, and offers the last one back
+        draftKey = 'new';
+        const d = readDrafts().new;
+        const n = d && d.items ? splitLinks(d.items).length : 0;
+        if (n) offerDraft('new', d, `Pick up where you left off? ${n} ${n === 1 ? 'song' : 'songs'} from ${draftTime(d.at)}.`);
+      }
       onRowsChanged();
       if (shareNow) sharePlaylist();
+      if (playNow) playPlaylist(0);
     }
 
     // A short link: the playlist's songs come from the Worker
-    async function openPlaylistLink(link, shareNow) {
+    async function openPlaylistLink(link, shareNow, playNow) {
       addRow('');
       setStatus('Opening playlist…');
       const { ok, status, data } = await getWorker('/playlist?id=' + link.id);
       if (!ok) {
-        setStatus(status === 404 ? 'No playlist has this link. Check it was copied in full.' : "Couldn't open this playlist right now. Try again in a moment.");
+        setStatus(status === 404 ? 'No playlist has this link. Check it was copied in full.'
+          : status === 410 ? 'Its owner deleted this playlist.'
+          : "Couldn't open this playlist right now. Try again in a moment.");
         return;
       }
-      listLink = { id: data.id, label: pickLabel(data.labels, link.label), items: data.items, labels: data.labels, mine: !!data.mine };
+      listLink = { id: data.id, label: pickLabel(data.labels, link.label), items: data.items, labels: data.labels, mine: !!data.mine,
+                   typed: data.typed || [], notes: data.notes || null, renamesLeft: data.renamesLeft };
       rowsEl.replaceChildren();
       for (const piece of splitLinks(data.items)) addRow(piece);
+      setRowNotes(data.notes);
       addRow('');
+      if (data.mine) {   // your playlist: unsaved changes from before can come back
+        draftKey = data.id;
+        const d = readDrafts()[data.id];
+        if (d && (d.items !== data.items || !sameNotes(d.notes, data.notes))) {
+          offerDraft(data.id, d, `You have unsaved changes to this playlist from ${draftTime(d.at)}.`);
+        } else if (d) {
+          setDraft(data.id, null);
+        }
+      }
       onRowsChanged();
       setStatus(controller ? 'Player ready – press Play playlist' : 'Waiting for player…');
       if (shareNow) sharePlaylist();
+      if (playNow) playPlaylist(0);
     }
 
     // Which label the address bar shows: the one in the link when it's really this playlist's
@@ -1369,7 +1518,30 @@
       const bar = document.getElementById('ownerBar');
       if (!bar) return;
       bar.hidden = !(listLink && listLink.mine && session);
-      document.getElementById('saveListBtn').disabled = !listLink || !listChanged() || !currentItems().length;
+      document.getElementById('saveListBtn').disabled = !listLink || !(listChanged() || notesChanged()) || !currentItems().length;
+      for (const row of rowsEl.children) refreshNote(row);
+    }
+
+    // The label editor (in collection.js): change any of the four labels, a few times a day
+    function renameOwnedPlaylist() {
+      if (!listLink || !listLink.mine) return;
+      const link = listLink;
+      loadCollection().then(c => c.openLabelEditor({
+        mode: 'rename', id: link.id, labels: link.labels, typed: link.typed || [], renamesLeft: link.renamesLeft == null ? 3 : link.renamesLeft,
+        onSave: data => {
+          const kind = LABEL_KINDS.find(k => link.labels[k] && (k === 'en' ? '-' : '') + link.labels[k].code === link.label) || null;
+          Object.assign(link, { labels: data.labels, typed: data.typed || [], renamesLeft: data.renamesLeft });
+          link.label = kind && data.labels[kind] ? (kind === 'en' ? '-' : '') + data.labels[kind].code : pickLabel(data.labels, '');
+          if (share && share.playlist && share.id === link.id) {
+            for (const k of LABEL_KINDS) share[k] = data.labels[k] || null;
+            share.typed = link.typed;
+            share.tones = startTones();
+            renderShare();
+          }
+          onRowsChanged();
+          setStatus(`Renamed. ${SITE_BASE.replace('https://', '')}/playlist/${link.id}${link.label} is its link now; the old ones still work.`);
+        },
+      }), () => setStatus("Couldn't open Rename. Check your connection and try again."));
     }
 
     async function saveOwnedPlaylist() {
@@ -1380,13 +1552,16 @@
         setStatus('Add at least one song first');
         return;
       }
-      const { ok, status, data } = await postWorker('/playlist/save', { edit: listLink.id, items });
+      const notes = currentNotes();
+      const { ok, status, data } = await postWorker('/playlist/save', { edit: listLink.id, items, notes });
       if (!ok) {
         if (status === 401) signedOutLocally();
         setStatus(status === 401 ? 'Sign in again to save your playlist' : (data.error || "Couldn't save your playlist. Try again."));
         return;
       }
       listLink.items = items;
+      listLink.notes = data.notes || null;
+      setDraft(listLink.id, null);
       onRowsChanged();
       setStatus(`Saved. ${SITE_BASE.replace('https://', '')}/playlist/${listLink.id}${listLink.label} now plays these songs.`);
     }
@@ -1448,7 +1623,7 @@
       const { ok, status, data } = await postWorker('/playlist/suggest', { items });
       if (share !== mine) return;
       if (!ok) return showShareError(status, data);
-      Object.assign(share, { id: data.id, idSig: data.idSig || null, saved: !!data.saved, mine: !!data.mine });
+      Object.assign(share, { id: data.id, idSig: data.idSig || null, saved: !!data.saved, mine: !!data.mine, typed: data.typed || [] });
       for (const k of LABEL_KINDS) share[k] = (data.labels && data.labels[k]) || null;
       if (!share.id || !LABEL_KINDS.some(k => share[k])) return showShareError(502, {});
       share.tones = startTones();
@@ -1459,8 +1634,28 @@
     // A saved playlist becomes the one this page shows: the address bar takes its short link,
     // and its owner can keep editing it
     function adoptPlaylist(data) {
-      listLink = { id: data.id, label: pickLabel(data.labels, listLink && listLink.id === data.id ? listLink.label : ''), items: share.items, labels: data.labels, mine: !!data.mine };
+      listLink = { id: data.id, label: pickLabel(data.labels, listLink && listLink.id === data.id ? listLink.label : ''), items: share.items, labels: data.labels, mine: !!data.mine,
+                   typed: data.typed || [], notes: data.notes || null, renamesLeft: data.renamesLeft };
+      if (draftKey === 'new') setDraft('new', null);   // it's saved now
+      draftKey = listLink.mine ? listLink.id : null;
       onRowsChanged();
+    }
+
+    // "Name it yourself" on a playlist that isn't saved yet: write any label, match or keep the rest
+    function openNamer() {
+      const mine = share;
+      loadCollection().then(c => c.openLabelEditor({
+        mode: 'new', items: share.items, typed: share.typed || [],
+        labels: Object.fromEntries(LABEL_KINDS.filter(k => share[k]).map(k => [k, share[k]])),
+        onSave: ({ labels, typed }) => {
+          if (share !== mine) return;
+          const emBefore = share.em && share.em.code;
+          for (const k of LABEL_KINDS) share[k] = labels[k] || null;
+          share.typed = typed;
+          if (share.em && share.em.code !== emBefore) share.tones = startTones();
+          renderShare();
+        },
+      }), () => setStatus("Couldn't open the namer. Check your connection and try again."));
     }
 
     // shared: the code as it is in the link being shared (with its skin tones), if it's a code
@@ -1527,6 +1722,11 @@
         const idLine = h('p', 'share-id', 'Every link starts with ');
         idLine.append(h('code', null, share.id), ', this playlist\'s ID. The label after it is yours to pick.');
         parts.push(idLine);
+        const nameRow = h('div', 'name-row');
+        const nameBtn = (text, onClick) => { const b = h('button', 'small', text); b.type = 'button'; b.addEventListener('click', onClick); return b; };
+        if (!share.saved) nameRow.append(nameBtn('✎ Name it yourself', openNamer));
+        else if (share.mine && listLink && listLink.id === share.id) nameRow.append(nameBtn('✎ Rename', renameOwnedPlaylist));
+        if (nameRow.children.length) parts.push(nameRow);
       }
       document.getElementById('sharePanel').replaceChildren(...parts, cards, h('p', 'share-note', note));
     }
@@ -1539,7 +1739,9 @@
       const c = share[script];
       const card = h('section', 'code-card');
       card.dataset.script = script;
-      card.append(h('div', 'code-label', SCRIPT_NAMES[script]));
+      const label = h('div', 'code-label', SCRIPT_NAMES[script]);
+      if (share.playlist && (share.typed || []).includes(script)) label.append(h('span', 'yours', 'yours'));
+      card.append(label);
       const chars = h('div', 'code-chars ' + script);
       c.chars.forEach((ch, i) => chars.append(charPicker(script, i)));
       card.append(chars);
@@ -1752,8 +1954,12 @@
         const c = share[k];
         if (c) labels[k] = k === 'zh' ? { code: c.code, chars: c.chars, why: c.why } : { code: c.code, why: c.why };
       }
+      labels.typed = share.typed || [];
+      const body = { items: share.items, labels, id: share.id, idSig: share.idSig };
+      const notes = currentNotes();   // a playlist saved to your account keeps its liner notes
+      if (share.mine && notes.some(Boolean) && notes.length === share.items.split(',').length) body.notes = notes;
       const mine = share;
-      const { ok, status, data } = await postWorker('/playlist/save', { items: share.items, labels, id: share.id, idSig: share.idSig });
+      const { ok, status, data } = await postWorker('/playlist/save', body);
       mine.busy = false;
       if (share !== mine) throw new Error('closed');
       if (!ok) {
@@ -1763,7 +1969,7 @@
       }
       // what's saved now; when someone saved these exact songs first, their labels come back
       const emBefore = share.em && share.em.code;
-      Object.assign(share, { id: data.id, saved: true, mine: !!data.mine });
+      Object.assign(share, { id: data.id, saved: true, mine: !!data.mine, typed: data.typed || [] });
       for (const k of LABEL_KINDS) share[k] = (data.labels && data.labels[k]) || null;
       if (share.em && share.em.code !== emBefore) share.tones = startTones();
       adoptPlaylist(data);
@@ -1842,7 +2048,42 @@
       showOwnerBar();
     }
 
-    const ON_ACCOUNT_PAGE = /^\/account\/?$/i.test(location.pathname);
+    // spotiky.com/account: the collection page lives in collection.js, loaded when it's needed
+    // (it also holds the label editor the playlist page uses)
+    const COLLECTION_JS = '/collection.js?v=1';
+    let collectionLoad = null;
+    function loadCollection() {
+      if (window.SpotikyCollection) return Promise.resolve(window.SpotikyCollection);
+      if (!collectionLoad) {
+        collectionLoad = new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = COLLECTION_JS;
+          s.onload = () => (window.SpotikyCollection ? resolve(window.SpotikyCollection) : reject(new Error('empty')));
+          s.onerror = () => { collectionLoad = null; reject(new Error("couldn't load")); };
+          document.head.append(s);
+        });
+      }
+      return collectionLoad;
+    }
+
+    function initAccountView() {
+      document.getElementById('trackView').hidden = true;
+      document.getElementById('trackHint').hidden = true;
+      document.getElementById('subtitle').textContent = 'Your playlists, the song codes you named, and your clips';
+      document.title = 'Spotiky – Your collection';
+      document.body.classList.add('wide');
+      const box = document.getElementById('collectionView');
+      box.hidden = false;
+      box.textContent = 'Opening your collection…';
+      showCollection();
+      if (!session) toggleAccount();
+    }
+
+    function showCollection() {
+      loadCollection().then(c => c.start(), () => {
+        document.getElementById('collectionView').textContent = "Couldn't load this page. Check your connection and reload.";
+      });
+    }
 
     function toggleAccount() {
       const panel = document.getElementById('accountPanel');
@@ -1857,10 +2098,7 @@
       const close = h('button', null, '✕');
       close.type = 'button';
       close.setAttribute('aria-label', 'Close');
-      close.addEventListener('click', () => {
-        panel.hidden = true;
-        if (/^\/account\/?$/i.test(location.pathname)) history.replaceState(null, '', '/');   // a refresh shouldn't reopen it
-      });
+      close.addEventListener('click', () => { panel.hidden = true; });
       head.append(close);
       const parts = [head];
       const button = (text, cls, onClick) => {
@@ -1870,8 +2108,12 @@
         return b;
       };
 
-      if (session) {
-        parts.push(h('p', null, 'Playlists you share while signed in are yours: edit them any time and their links stay the same.'));
+      if (session && view === 'account') {
+        parts.push(h('p', null, 'Signed in. Your collection is below.'), button('Sign out', 'secondary', signOutHere));
+      } else if (session) {
+        const go = h('a', 'panel-link', 'Open your collection');
+        go.href = '/account';
+        parts.push(go, h('p', null, 'Playlists you share while signed in are yours: edit them any time and their links stay the same.'));
         const list = h('div', 'my-lists');
         list.append(h('p', 'small-note', 'Loading your playlists…'));
         parts.push(list, button('Sign out', 'secondary', signOutHere));
@@ -1940,14 +2182,22 @@
       signedOutLocally();
       if (share && share.playlist) closeShare();
       renderAccount('Signed out.', true);
+      if (view === 'account') showCollection();
     }
 
     // Signing in on a playlist's page: if it's yours, you can edit it now
     async function refreshOwnership() {
+      if (view === 'account') {
+        document.getElementById('accountPanel').hidden = true;
+        return showCollection();
+      }
       if (share && share.playlist && !share.saved) closeShare();   // its suggestion was for someone signed out
-      if (!listLink) return;
+      if (!listLink) return showOwnerBar();
       const { ok, data } = await getWorker('/playlist?id=' + listLink.id);
-      if (ok && listLink && listLink.id === data.id) listLink.mine = !!data.mine;
+      if (ok && listLink && listLink.id === data.id) {
+        Object.assign(listLink, { mine: !!data.mine, typed: data.typed || [], notes: data.notes || null, renamesLeft: data.renamesLeft });
+        if (listLink.mine) draftKey = listLink.id;
+      }
       showOwnerBar();
     }
 
@@ -2002,11 +2252,12 @@
     if (session) document.getElementById('accountBtn').textContent = 'Your account';
     if (view === 'playlist') {
       initPlaylistView();
+    } else if (view === 'account') {
+      initAccountView();
     } else {
       readUrlAndPlay();
       window.addEventListener('hashchange', readUrlAndPlay);
       window.addEventListener('popstate', readUrlAndPlay);
-      if (ON_ACCOUNT_PAGE) toggleAccount();   // spotiky.com/account: sign in, or see your playlists
     }
 
     // Connect to Spotify's player whether its script finished before this one or finishes later

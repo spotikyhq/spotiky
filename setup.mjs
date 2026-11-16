@@ -17,6 +17,8 @@
 //                           (the name Chrome shows for it, or its folder, like "Profile 1")
 //   --no-browser            just print the sign-in link, to open in any browser yourself
 //   --new-resend-key        replace the Worker's Resend key
+//   --connect               only open the Worker's Builds settings, to deploy it from GitHub on
+//                           every push (use with --chrome-profile to open them in that profile)
 // The Resend key can also come from the RESEND_API_KEY environment variable.
 
 import { spawn, spawnSync } from "node:child_process";
@@ -33,6 +35,7 @@ const CONFIG = "wrangler.jsonc";
 const BACKUP = join(homedir(), "spotiky-PEPPER-backup.txt");
 const NEW_RESEND_KEY = process.argv.includes("--new-resend-key");
 const NO_BROWSER = process.argv.includes("--no-browser");
+const CONNECT = process.argv.includes("--connect");
 const CHROME_PROFILE = (() => {   // --chrome-profile Work, or --chrome-profile=Work
   const i = process.argv.findIndex(a => a === "--chrome-profile" || a.startsWith("--chrome-profile="));
   if (i < 0) return null;
@@ -204,6 +207,28 @@ if (wrangler(["whoami", "--json"], { quiet: true }).ok) {
   say("  Your default browser will open so you can sign in to Cloudflare.");
   say('  (To use a Chrome profile instead: node setup.mjs --chrome-profile "Work")');
   if (!wrangler(["login"]).ok) stop("The Cloudflare sign-in didn't finish. Run this again.");
+}
+
+// ---- Deploying from GitHub (--connect) ------------------------------------------------
+// Cloudflare's Workers Builds deploys the Worker from the repo on every push. Connecting it is
+// a few choices in the dashboard, so this opens the right page and says what to pick.
+if (CONNECT) {
+  step("Deploying the Worker from GitHub");
+  const who = jsonIn(wrangler(["whoami", "--json"], { quiet: true }).out);
+  const account = who && Array.isArray(who.accounts) && who.accounts.length === 1 ? who.accounts[0].id : null;
+  const page = account
+    ? `https://dash.cloudflare.com/${account}/workers/services/view/${WORKER}/production/settings`
+    : "https://dash.cloudflare.com/?to=/:account/workers-and-pages";
+  say(`  On that page, under Build, press Connect and pick:
+    • Git account: spotikyhq, repository: spotiky, branch: main
+    • Build command: leave it empty
+    • Deploy command: npx wrangler deploy
+    • Build watch paths, include: preview-worker.js, wrangler.jsonc
+      (so only Worker changes redeploy it; the site itself stays on GitHub Pages)
+  Then press Connect. Secrets stay in Cloudflare; nothing secret goes to GitHub.`);
+  if (CHROME_PROFILE) openInChrome(page, CHROME_PROFILE);
+  else say(`\n  Open: ${page}${account ? "" : `\n  then Workers & Pages → ${WORKER} → Settings → Build.`}`);
+  process.exit(0);
 }
 
 // ---- 2. The database ----------------------------------------------------------------

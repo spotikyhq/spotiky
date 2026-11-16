@@ -11,6 +11,6 @@
   "ai": { "binding": "AI" },
   // Codes, playlists and sign-ins. The Worker makes its own tables the first time it's used.
   "d1_databases": [
-    { "binding": "DB", "database_name": "spotiky", "database_id": "run setup.mjs to fill this in" }
+    { "binding": "DB", "database_name": "spotiky", "database_id": "a2457e37-83d4-4efd-bef9-19f894c26404" }
   ]
 }
