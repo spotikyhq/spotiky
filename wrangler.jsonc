@@ -1,6 +1,8 @@
 // Cloudflare's settings for the Spotiky Worker. Wrangler (Cloudflare's command-line tool) and
 // Workers Builds both read this file. It holds no secrets: PEPPER and RESEND_API_KEY live only
 // in Cloudflare. setup.mjs sets them, and fills in the database ID below.
+// Workers Builds is connected to this repo: a push to main that changes this file or
+// preview-worker.js deploys the Worker by itself.
 {
   "name": "spotiky-preview",
   "main": "preview-worker.js",
