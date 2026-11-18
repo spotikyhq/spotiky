@@ -44,6 +44,10 @@
 // fingerprint of its songs and times. A signed-in person's playlist gets its own ID and stays
 // theirs to edit.
 
+import { audio } from "./audio.js";
+
+const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
 const FROM = "Spotiky <code@spotiky.com>";
