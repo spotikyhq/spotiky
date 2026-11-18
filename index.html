@@ -12,6 +12,10 @@
   <meta name="theme-color" content="#1DB954">
   <meta name="twitter:card" content="summary_large_image">
   <style>
+    .discord-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; }
+    .discord-row button.secondary { width: auto; margin: 0; padding: 10px 14px; font-size: 0.85rem; }
+    .discord-row .copy-discord { width: auto; margin: 0; padding: 4px 8px; background: none; color: #9a9a9a; font-size: 0.75rem; font-weight: 500; }
+    .discord-row .copy-discord:hover { background: none; color: #fff; text-decoration: underline; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body {
@@ -1728,6 +1732,7 @@
         else if (share.mine && listLink && listLink.id === share.id) nameRow.append(nameBtn('✎ Rename', renameOwnedPlaylist));
         if (nameRow.children.length) parts.push(nameRow);
       }
+      if (!share.playlist && typeof discordRow === 'function') parts.push(discordRow());
       document.getElementById('sharePanel').replaceChildren(...parts, cards, h('p', 'share-note', note));
     }
 
@@ -2264,5 +2269,6 @@
     if (window.spotifyIframeApi) startPlayer(window.spotifyIframeApi);
     else window.onSpotifyIframeApiReady = startPlayer;
   </script>
+<script src="/discord.js"></script>
 </body>
 </html>
