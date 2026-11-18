@@ -26,7 +26,7 @@ blocklist (LDNOOBW, CC BY 4.0) from `dev/codedata/out`, `dev/emojiwork` and `dev
 Worker (Node 22+, no installs; a stand-in D1 database runs the real SQL):
 
     cp preview-worker.js dev/tests/worker/worker.mjs
-    cd dev/tests/worker && for t in test test_ids test_share test_accounts test_collection; do node $t.mjs; done
+    cd dev/tests/worker && for t in test test_ids test_share test_accounts test_collection test_previews; do node $t.mjs; done
 
 Browser (Playwright and Chrome):
 
@@ -47,6 +47,12 @@ Setup script (a stand-in Wrangler and Chrome):
 ## Deploying
 
 - The site: push to `main`; GitHub Pages serves it.
+- Link previews: the Worker also runs on `spotiky.com/*` (the route in `wrangler.jsonc`), in
+  front of GitHub Pages. GitHub Pages sends every page address (`/track/ID$13-44`, `/夜光83`,
+  `/playlist/5mh夜歌`) as 404.html with status 404, and Discord and the other apps show no
+  preview for a 404, so the Worker sends those pages with status 200 and the song's title,
+  artist, cover and times in the `<head>`. Everything else passes straight through. Discord
+  keeps a preview for about 30 minutes: to see a change sooner, share the link with `?v=2`.
 - The Worker: `node setup.mjs --chrome-profile spotiky` deploys it (and skips setup steps
   already done). Or connect Workers Builds once with `node setup.mjs --connect --chrome-profile spotiky`,
   and every push that changes `preview-worker.js` or `wrangler.jsonc` deploys it.

@@ -1,5 +1,7 @@
 // Spotiky Worker. Runs on Cloudflare Workers, not GitHub Pages.
-// Live at https://spotiky-preview.spotikyhq.workers.dev
+// Live at https://spotiky-preview.spotikyhq.workers.dev, and in front of GitHub Pages on
+// spotiky.com, where it gives every song, code and playlist link its own preview card in
+// Discord, iMessage, WhatsApp, Slack and X (see "spotiky.com: pages with link previews").
 //
 // Songs
 //   GET  /?id=TRACK_ID        a track's preview MP3 and song name: { preview_url, name, source }
@@ -683,9 +685,10 @@ const ROUTES = {
 };
 
 export default {
-  async fetch(request, env) {
-    if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (SITE_HOSTS.has(url.hostname)) return site(request, env, ctx, url);
+    if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const handler = ROUTES[`${request.method} ${url.pathname}`];
     if (!handler) return preview(url);
     const body = request.method === "POST" ? await request.json().catch(() => null) : null;
@@ -1828,12 +1831,16 @@ async function songInfo(id) {
 }
 
 async function oembedTitle(id) {
+  const data = await oembedData(id);
+  return data && typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
+}
+
+// Spotify's oEmbed answer for a song: its title and a 300px cover
+async function oembedData(id) {
   try {
     const page = encodeURIComponent(`https://open.spotify.com/track/${id}`);
     const res = await fetch(`https://open.spotify.com/oembed?url=${page}`, { headers: { "User-Agent": UA } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
+    return res.ok ? await res.json() : null;
   } catch (err) {
     return null;
   }
@@ -1938,6 +1945,429 @@ async function preview(url) {
   } catch (err) {
     return json({ error: "Server error", details: err.message }, 500);
   }
+}
+
+// ---- spotiky.com: pages with link previews ----------------------------------------------------
+// The Worker also runs in front of GitHub Pages on spotiky.com (the route in wrangler.jsonc).
+// GitHub Pages answers every page address (/track/ID$13-44, /夜光83-105, /playlist/5mh夜歌)
+// with 404.html, which is the page itself sent with status 404, and Discord, iMessage,
+// WhatsApp, Slack and X show no preview for a 404. So for those addresses the Worker sends the
+// same page with status 200, with the song's title, artist, cover and clip times in its <head>.
+// Everything else (the home page, collection.js, the resume and site folders) passes straight
+// through, and if anything here fails, the request goes on to GitHub Pages as if the Worker
+// weren't there.
+//
+// What Discord shows for spotiky.com/track/ID$13-44:
+//   Spotiky                        site name (from the oEmbed answer below)
+//   The Weeknd                     artist, linked to their Spotify page
+//   Blinding Lights                song title, linked to the Spotiky page
+//   Clip 0:13–0:44 · 夜光 · 🌃💡    the times, then the song's codes
+//   [cover]                        640px cover art; the stripe beside it takes the cover's color
+
+const SITE = "https://spotiky.com";
+const SITE_HOSTS = new Set(["spotiky.com", "www.spotiky.com", "open.spotiky.com"]);
+const GREEN = "#1DB954";
+const GONE = { gone: true };   // a playlist its owner deleted
+// Preview fetchers get the whole card; a person opening the page waits no longer than PERSON_WAIT
+const PREVIEW_BOTS = /bot|crawl|spider|preview|externalhit|facebot|whatsapp|telegram|slack|discord|skype|teams|linkedin|embedly|iframely|pinterest|snapchat|kakao|line\/|mastodon|http\.rb|bluesky|cardyb|curl|wget|python|go-http|okhttp|java\//i;
+const BOT_WAIT = 4000, PERSON_WAIT = 700;   // milliseconds; Discord gives a whole preview 10 seconds
+const MAKER_CARD = { type: "website", title: "Make a playlist on Spotiky", description: "Line up songs and clips, then share them as one link." };
+const ACCOUNT_CARD = { type: "website", title: "Your Spotiky collection", description: "Your playlists, the codes you named and your clips." };
+// The collection page's sleeve colors, so a playlist's preview matches its sleeve
+const SLEEVES = ["#2b4c7e", "#7a2e3b", "#1f5c4a", "#5b3a82", "#b8532c", "#233d3f", "#8a6d1f", "#2f2f2f", "#3e5f8a", "#6b4f3a", "#1d4b2c", "#4a2545"];
+const hashOf = s => { let x = 2166136261; for (const c of String(s)) x = Math.imul(x ^ c.codePointAt(0), 16777619); return x >>> 0; };
+
+// Links as the page reads them (index.html): a time is 83, 1:23, 1.23 or 1:02:03, and a clip
+// adds "-end". Codes take their times right after the code: /夜光83-105, /track/夜光1:23-1:45
+const TIME = String.raw`\d+(?:[.:,]\d+)*`;
+const RANGE = String.raw`(${TIME})(?:-[$.]?(${TIME}))?`;
+const RANGE_RE = new RegExp(String.raw`(?:\$|[?&]t=|^\.)` + RANGE, "i");     // …$83  …&t=1:23  ID.83
+const TRAILING_RE = new RegExp(String.raw`\.` + RANGE + String.raw`\/?$`);    // …?si=abc.83
+const CODE_RANGE_RE = new RegExp(String.raw`^(?:\$|[?&]t=|\.)?` + RANGE, "i");
+const CODE_CHARS = String.raw`\p{Script=Han}\p{Script=Egyptian_Hieroglyphs}\p{Emoji_Presentation}`;
+const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(.*)$`, "u");
+const CODE_START_RE = new RegExp(String.raw`^([${CODE_CHARS}]+)`, "u");
+const PLAYLIST_LINK_RE = /^(?=[0-9a-hjkmnp-tv-z]{0,12}[0-9])([0-9a-hjkmnp-tv-z]{3,13})(?=$|-|[^\x00-\x7F])(.*)$/iu;
+
+async function site(request, env, ctx, url) {
+  if (ctx && ctx.passThroughOnException) ctx.passThroughOnException();   // an error here still shows the page
+  if (url.hostname !== "spotiky.com") return Response.redirect(SITE + url.pathname + url.search, 301);
+  if (url.pathname === "/oembed") return oembedFor(url, env);
+  const route = (request.method === "GET" || request.method === "HEAD") && pageRoute(url);
+  if (!route) return fetch(request);
+  try {
+    const bot = PREVIEW_BOTS.test(request.headers.get("User-Agent") || "");
+    const card = previewFor(route, env).catch(() => undefined);
+    if (ctx && ctx.waitUntil) ctx.waitUntil(card);   // it finishes, and fills the caches, after a timed-out page has gone out
+    const [page, found] = await Promise.all([
+      fetch(request.method === "HEAD" ? new Request(request, { method: "GET" }) : request),
+      within(card, bot ? BOT_WAIT : PERSON_WAIT),
+    ]);
+    return await withCard(page, found === undefined ? fallbackCard(route) : found, request, url);
+  } catch (err) {
+    return fetch(request);
+  }
+}
+
+// Resolves to what the promise gives, or undefined once ms have gone by
+const within = (promise, ms) => new Promise(resolve => {
+  const timer = setTimeout(() => resolve(undefined), ms);
+  promise.then(value => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(undefined); });
+});
+
+// Which page an address is, read the way index.html reads it; null for everything else
+function pageRoute(url) {
+  const path = decodeSafe(url.pathname);
+  const full = path + decodeSafe(url.search);   // a time can sit in the query: /track/ID?si=abc&t=1:23
+  if (/^\/account\/?$/i.test(path)) return { kind: "page", card: ACCOUNT_CARD };
+  const pl = path.match(/^\/playlist(?:\/(.*))?$/i);
+  if (pl) {
+    const list = (pl[1] || "").replace(/\/+$/, "");
+    if (!list) return { kind: "page", card: MAKER_CARD };
+    if (/^[a-zA-Z0-9]{22}$/.test(list)) return null;   // a Spotify playlist's own ID: not playable on Spotiky yet
+    const link = list.match(PLAYLIST_LINK_RE);
+    if (link) return { kind: "list", id: link[1].toLowerCase(), label: link[2] };
+    const pieces = listPieces(list);
+    return pieces.length ? { kind: "items", pieces } : null;
+  }
+  const coded = stripVS(full).match(CODE_IN_PATH_RE);
+  if (coded) return { kind: "code", code: coded[1], ...codeRangeIn(coded[2]) };
+  const track = full.match(/^\/track\/([a-zA-Z0-9]{22})/);
+  if (track) return { kind: "track", id: track[1], ...rangeIn(full.slice(track[0].length)) };
+  // The oldest links: spotiky.com/?track=ID&t=83
+  const old = path === "/" && url.searchParams.get("track");
+  const oldId = old && (old.match(/(?:track[/:])([a-zA-Z0-9]{22})/) || old.match(/^([a-zA-Z0-9]{22})$/));
+  if (oldId) return { kind: "track", id: oldId[1], ...rangeIn("&t=" + (url.searchParams.get("t") || "0")) };
+  return null;
+}
+
+function rangeIn(rest) {
+  const m = rest.match(RANGE_RE) || rest.match(TRAILING_RE);
+  return m ? { start: m[1], end: m[2] || null } : { start: null, end: null };
+}
+
+function codeRangeIn(rest) {
+  const m = String(rest).match(CODE_RANGE_RE);
+  return m ? { start: m[1], end: m[2] || null } : { start: null, end: null };
+}
+
+// A playlist link's songs: ID1$83,夜光1:23-1:45,ID3. A piece that's only a time, like the
+// "23" in 夜光1,23, is a decimal comma, not a new song.
+function listPieces(list) {
+  const out = [];
+  for (const piece of list.split(",")) {
+    if (!piece) continue;
+    if (out.length && /^[\d.:,\-$]{1,12}$/.test(piece)) out[out.length - 1] += "," + piece;
+    else out.push(piece);
+  }
+  return out;
+}
+
+// The card for a page: an object, null when there's no such code or playlist, or GONE
+async function previewFor(route, env) {
+  const db = env.DB;
+  if (route.kind === "page") return route.card;
+  if (route.kind === "track") return trackCard(route, null, db);
+  if (!db) throw new Error("No database");
+  if (route.kind === "code") {
+    const id = await trackForCode(db, route.code);
+    return id ? trackCard({ ...route, id }, route.code, db) : null;
+  }
+  if (route.kind === "list") {
+    const row = await db.prepare(`SELECT p.items AS items, p.labels AS labels, s.deleted AS deleted
+      FROM playlists p LEFT JOIN shelf s ON s.id = p.id WHERE p.id = ?`).bind(route.id).first();
+    if (!row) return null;
+    if (row.deleted) return GONE;
+    let stored = {};
+    try { stored = JSON.parse(row.labels) || {}; } catch (err) { /* no labels to show */ }
+    return playlistCard(row.items.split(","), db, listName(stored, route.label), hashOf(route.id));
+  }
+  return playlistCard(route.pieces, db, null, hashOf(route.pieces.join(",")));
+}
+
+async function trackCard({ id, start, end }, linkCode, db) {
+  const [song, codes] = await Promise.all([songDetails(id), db ? songCodesFor(db, id).catch(() => []) : []]);
+  const shown = [];
+  for (const c of [linkCode, ...codes]) if (c && !shown.some(s => canon(s) === canon(c))) shown.push(c);
+  const description = [clipText(start, end), ...shown].join(" · ");
+  if (!song) return { type: "music.song", title: "Play this song on Spotiky", description, color: GREEN };
+  return {
+    type: "music.song",
+    title: song.title,
+    description,
+    author: song.artist ? { name: song.artist, url: song.artistUrl } : null,
+    image: song.image ? { ...song.image, alt: `Cover art for ${song.title}` } : null,
+    color: song.color || GREEN,
+  };
+}
+
+// The first three songs by name, the first cover, and the sleeve color
+async function playlistCard(pieces, db, name, seed) {
+  const n = pieces.length;
+  const songsWord = `${n} ${n === 1 ? "song" : "songs"}`;
+  const ids = await Promise.all(pieces.slice(0, 3).map(p => trackOf(p, db).catch(() => null)));
+  const named = (await Promise.all(ids.map(id => (id ? songDetails(id) : null)))).filter(Boolean);
+  const cover = named.find(s => s.image);
+  const more = n - named.length;
+  return {
+    type: "music.playlist",
+    title: name || "A Spotiky playlist",
+    description: named.length ? named.map(s => s.title).join(" · ") + (more > 0 ? ` + ${more} more` : "") : `${songsWord} that play one after another`,
+    author: { name: `Playlist · ${songsWord}` },
+    image: cover ? { ...cover.image, alt: `Cover art for ${cover.title}` } : null,
+    color: brighten(SLEEVES[seed % SLEEVES.length]),
+  };
+}
+
+// While the song details are still on their way, a card that needs none of them
+function fallbackCard(route) {
+  if (route.kind === "page") return route.card;
+  if (route.kind === "track" || route.kind === "code") {
+    return { type: "music.song", title: "Play this song on Spotiky", description: [clipText(route.start, route.end), route.code].filter(Boolean).join(" · "), color: GREEN };
+  }
+  return { type: "music.playlist", title: "A Spotiky playlist", description: "Songs and clips that play one after another.", color: GREEN };
+}
+
+// The playlist's name as its link shows it: the label of the link's kind, else the one its
+// owner typed, else emoji, Chinese, English, hieroglyphs. Typed names keep their quotes.
+function listName(stored, urlLabel) {
+  const typed = Array.isArray(stored._typed) ? stored._typed : [];
+  const has = k => k && stored[k] && typeof stored[k].code === "string" && stored[k].code;
+  const kind = [labelKind(String(urlLabel || "").replace(/^-/, "")), ...typed, "em", "zh", "en", "eg"].find(has);
+  if (!kind) return null;
+  return typed.includes(kind) ? `“${stored[kind].code}”` : stored[kind].code;
+}
+
+function labelKind(s) {
+  if (!s) return null;
+  if (/\p{Script=Han}/u.test(s)) return "zh";
+  if (/\p{Script=Egyptian_Hieroglyphs}/u.test(s)) return "eg";
+  if (/\p{Emoji_Presentation}/u.test(s)) return "em";
+  return /^[a-z]/i.test(s) ? "en" : null;
+}
+
+async function trackOf(piece, db) {
+  const id = piece.match(/^[a-zA-Z0-9]{22}/);
+  if (id) return id[0];
+  const code = stripVS(piece).match(CODE_START_RE);
+  return code && db ? trackForCode(db, code[1]) : null;
+}
+
+async function trackForCode(db, code) {
+  const row = await db.prepare("SELECT track FROM song_codes WHERE code = ?").bind(canon(code)).first();
+  return row ? row.track : null;
+}
+
+// A song's Chinese and emoji codes. Hieroglyphs are left out: many phones can't show them.
+async function songCodesFor(db, id) {
+  const { results } = await db.prepare("SELECT code, script FROM song_codes WHERE track = ? AND script IN ('zh', 'em')").bind(id).all();
+  return ["zh", "em"].map(s => (results.find(r => r.script === s) || {}).code).filter(Boolean);
+}
+
+// "Clip 0:13–0:44", "Starts at 1:23" or "Full song"
+function clipText(start, end) {
+  const s = start ? parseTime(start) : 0;
+  const e = end != null && end !== "" ? parseTime(end) : null;
+  if (e != null && e > s) return `Clip ${formatTime(s)}–${formatTime(e)}`;
+  return s > 0 ? `Starts at ${formatTime(s)}` : "Full song";
+}
+
+// The page's own time reading: 83, 1:23, 1.23, 1:02:03 -> seconds
+function parseTime(t) {
+  if (!t) return 0;
+  t = String(t).trim().replace(",", ".").replace(/^(?:\$|[?&]?t=)/i, "");
+  if (t.includes(":")) {
+    const parts = t.split(":").map(p => parseFloat(p) || 0);
+    if (parts.length === 2) return Math.floor(parts[0] * 60 + parts[1]);
+    if (parts.length === 3) return Math.floor(parts[0] * 3600 + parts[1] * 60 + parts[2]);
+  }
+  if (t.includes(".")) {
+    const [m, s] = t.split(".").map(p => parseFloat(p) || 0);
+    return Math.floor(m * 60 + s);
+  }
+  return parseInt(t, 10) || 0;
+}
+
+function formatTime(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60;
+  const s = String(sec % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+function decodeSafe(s) {
+  try { return decodeURIComponent(s); } catch (err) { return s; }
+}
+
+// Song details for previews, kept an hour in this Worker's memory and a week in Cloudflare's
+// cache, so Discord's two fetches (the page, then its oEmbed) ask Spotify once
+const songMemo = new Map();
+function songDetails(id) {
+  const hit = songMemo.get(id);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.value;
+  const entry = { at: Date.now(), ttl: HOUR, value: cachedSong(id).catch(() => null) };
+  entry.value.then(song => { if (!song) entry.ttl = MINUTE; });   // try Spotify again soon
+  songMemo.set(id, entry);
+  if (songMemo.size > 500) songMemo.delete(songMemo.keys().next().value);
+  return entry.value;
+}
+
+async function cachedSong(id) {
+  const cache = typeof caches !== "undefined" && caches.default;
+  const key = `${SITE}/.song/${id}`;
+  const kept = cache && (await cache.match(key).catch(() => null));
+  if (kept) return kept.json();
+  const song = await songFromSpotify(id);
+  if (song && cache) {
+    await cache.put(key, new Response(JSON.stringify(song), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=604800" },
+    })).catch(() => {});
+  }
+  return song;
+}
+
+async function songFromSpotify(id) {
+  const [oe, html] = await Promise.all([oembedData(id), embedPage(id)]);
+  const title = (oe && typeof oe.title === "string" && oe.title.trim()) || (html && titleIn(html));
+  if (!title) return null;
+  return {
+    title,
+    artist: (html && artistsIn(html)) || null,
+    artistUrl: (html && artistUrlIn(html)) || null,
+    image: (html && coverIn(html)) || coverFrom(oe),
+    color: (html && colorIn(html)) || null,
+  };
+}
+
+// The largest cover on the embed page: its data lists 64, 300 and 640px sizes
+function coverIn(html) {
+  const at = html.indexOf('"coverArt"');
+  const list = at >= 0 && html.slice(at, at + 3000).match(/"sources":\s*\[([^\]]*)\]/);
+  if (!list) return null;
+  let best = null;
+  for (const item of list[1].split("}")) {
+    const url = item.match(/"url":\s*"(https:[^"]+)"/);
+    const width = Number((item.match(/"width":\s*(\d+)/) || [])[1]) || 0;
+    const height = Number((item.match(/"height":\s*(\d+)/) || [])[1]) || 0;
+    if (url && (!best || width > best.width)) best = { url: unjson(url[1]), width, height };
+  }
+  if (!best) return null;
+  return best.width && best.height ? best : { url: best.url };
+}
+
+// oEmbed's 300px cover, swapped for the 640px one when it's a standard Spotify cover address
+function coverFrom(oe) {
+  const url = oe && typeof oe.thumbnail_url === "string" && /^https:\/\//.test(oe.thumbnail_url) ? oe.thumbnail_url : null;
+  if (!url) return null;
+  if (url.includes("ab67616d00001e02")) return { url: url.replace("ab67616d00001e02", "ab67616d0000b273"), width: 640, height: 640 };
+  const width = Number(oe.thumbnail_width) || 0, height = Number(oe.thumbnail_height) || 0;
+  return width && height ? { url, width, height } : { url };
+}
+
+function artistUrlIn(html) {
+  const list = html.match(/"artists":\s*\[([^\]]*)\]/);
+  const m = (list && list[1].match(/spotify:artist:([A-Za-z0-9]{22})/)) || html.match(/\/artist\/([A-Za-z0-9]{22})/);
+  return m ? `https://open.spotify.com/artist/${m[1]}` : null;
+}
+
+// The color Spotify picked from the cover (not its grey stand-in), made light enough to see
+function colorIn(html) {
+  const m = html.match(/"colorDark":\s*\{\s*"hex":\s*"(#[0-9A-Fa-f]{6})"\s*(?:,\s*"isFallback":\s*(true|false))?/);
+  return m && m[2] !== "true" ? brighten(m[1]) : null;
+}
+
+// The same hue, raised to half lightness when darker, so the stripe beside a preview shows on
+// Discord's dark and light themes alike
+function brighten(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (l >= 0.5) return hex.toLowerCase();
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d) h = (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  const c = s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = 0.5 - c / 2;   // lightness 0.5
+  const [r1, g1, b1] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const to = v => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${to(r1)}${to(g1)}${to(b1)}`;
+}
+
+// GitHub Pages' answer with the card in its <head> and status 200 (410 for a deleted playlist;
+// a code or playlist that doesn't exist keeps its 404)
+async function withCard(page, card, request, url) {
+  const ours = (page.status === 404 || page.status === 200) && /text\/html/i.test(page.headers.get("Content-Type") || "");
+  if (!ours || card === null) return page;
+  if (card === GONE) return new Response(page.body, { status: 410, headers: page.headers });
+  const html = await page.text();
+  const headers = new Headers(page.headers);
+  for (const h of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(h);
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  const body = withHead(html, previewHead(card, SITE + url.pathname + url.search));
+  return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
+}
+
+function previewHead(card, pageUrl) {
+  const tags = [
+    ["property", "og:site_name", "Spotiky"],
+    ["property", "og:type", card.type || "website"],
+    ["property", "og:url", pageUrl],
+    ["property", "og:title", card.title],
+    ["property", "og:description", card.description],
+    ["name", "description", card.description],
+  ];
+  if (card.image) {
+    tags.push(["property", "og:image", card.image.url]);
+    if (card.image.width && card.image.height) tags.push(["property", "og:image:width", card.image.width], ["property", "og:image:height", card.image.height]);
+    tags.push(["property", "og:image:alt", card.image.alt]);
+  }
+  tags.push(["name", "twitter:card", card.image ? "summary_large_image" : "summary"]);
+  tags.push(["name", "theme-color", card.color || GREEN]);
+  const lines = tags.filter(t => t[2] != null && t[2] !== "").map(([attr, key, value]) => `<meta ${attr}="${key}" content="${escAttr(value)}">`);
+  // Discord takes the artist line and the linked site name from this
+  lines.push(`<link rel="alternate" type="application/json+oembed" href="${escAttr(`${SITE}/oembed?url=${encodeURIComponent(pageUrl)}`)}">`);
+  return { title: /Spotiky/.test(card.title) ? card.title : `${card.title} · Spotiky`, lines };
+}
+
+// Swaps the page's own preview tags (made for the home page) for the card's
+function withHead(html, { title, lines }) {
+  const end = html.search(/<\/head>/i);
+  if (end < 0) return html;
+  let top = html.slice(0, end)
+    .replace(/[ \t]*<meta\s+(?:property|name)="(?:og:[^"]*|twitter:[^"]*|theme-color|description)"[^>]*>[ \t]*(?:\r?\n)?/gi, "")
+    .replace(/[ \t]*<link\b[^>]*application\/json\+oembed[^>]*>[ \t]*(?:\r?\n)?/gi, "");
+  const block = lines.map(l => `  ${l}\n`).join("");
+  const t = top.match(/<title>[\s\S]*?<\/title>[ \t]*(?:\r?\n)?/i);
+  if (t) {
+    top = top.slice(0, t.index) + `<title>${escText(title)}</title>\n` + block + top.slice(t.index + t[0].length);
+  } else {
+    const h = top.match(/<head\b[^>]*>(?:\r?\n)?/i);
+    const at = h ? h.index + h[0].length : top.length;
+    top = top.slice(0, at) + `  <title>${escText(title)}</title>\n` + block + top.slice(at);
+  }
+  return top + html.slice(end);
+}
+
+const escText = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const escAttr = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// GET spotiky.com/oembed?url=<a Spotiky page>: Discord reads the artist line and the linked
+// site name from here; Slack takes the cover from it too
+async function oembedFor(url, env) {
+  let page = null;
+  try { page = new URL(url.searchParams.get("url") || ""); } catch (err) { /* not an address */ }
+  const route = page && SITE_HOSTS.has(page.hostname) && pageRoute(page);
+  const found = route ? await within(previewFor(route, env), BOT_WAIT) : null;
+  const card = found === undefined ? fallbackCard(route) : found;
+  if (!card || card === GONE) return json({ error: "No preview for that address" }, 404);
+  const out = { version: "1.0", type: "link", provider_name: "Spotiky", provider_url: SITE, title: card.title };
+  if (card.author) {
+    out.author_name = card.author.name;
+    if (card.author.url) out.author_url = card.author.url;
+  }
+  if (card.image && card.image.width && card.image.height) {
+    Object.assign(out, { thumbnail_url: card.image.url, thumbnail_width: card.image.width, thumbnail_height: card.image.height });
+  }
+  return json(out, 200, { "Cache-Control": "public, max-age=3600" });
 }
 
 // ---- Helpers -------------------------------------------------------------------------------

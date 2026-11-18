@@ -9,6 +9,11 @@
   "compatibility_date": "2026-06-01",
   // Keeps the address spotiky-preview.spotikyhq.workers.dev
   "workers_dev": true,
+  // Also runs in front of GitHub Pages on spotiky.com, so song, code and playlist links show
+  // a preview card in Discord and other apps. Everything else there passes straight through.
+  "routes": [
+    { "pattern": "spotiky.com/*", "zone_name": "spotiky.com" }
+  ],
   // Workers AI suggests codes from what a song is about
   "ai": { "binding": "AI" },
   // Codes, playlists and sign-ins. The Worker makes its own tables the first time it's used.
