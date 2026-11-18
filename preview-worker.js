@@ -691,6 +691,7 @@ const ROUTES = {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/audio/")) return audio(request, env, ctx, url);
     if (SITE_HOSTS.has(url.hostname)) return site(request, env, ctx, url);
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const handler = ROUTES[`${request.method} ${url.pathname}`];
