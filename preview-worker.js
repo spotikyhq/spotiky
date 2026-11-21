@@ -47,8 +47,6 @@
 import { audio } from "./audio.js";
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
-
-const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
 const FROM = "Spotiky <code@spotiky.com>";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
