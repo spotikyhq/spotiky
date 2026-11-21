@@ -3,3 +3,5 @@ dev/tests/worker/worker.mjs
 *.png
 !og.png
 node_modules/
+.wrangler/
+*.mp3

@@ -1,5 +1,8 @@
 // Posts a song's clip to a Discord webhook as a real audio attachment, so the message gets
 // Discord's own player. The webhook URL stays in this browser and never reaches Spotiky.
+//
+// Two ways out: a bare audio link, which anyone can paste and Discord turns into a player on
+// its own, and the webhook, which wraps that player in a card. Both share one metadata fetch.
 
 const SITE = "https://spotiky.com";
 const WEBHOOK_KEY = "spotiky-discord-webhook";
@@ -8,20 +11,63 @@ const WEBHOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/web
 const webhookGet = () => { try { return localStorage.getItem(WEBHOOK_KEY) || ""; } catch (e) { return ""; } };
 const webhookSet = url => { try { url ? localStorage.setItem(WEBHOOK_KEY, url) : localStorage.removeItem(WEBHOOK_KEY); } catch (e) {} };
 
+// A song's title, artist, cover and artist page, asked for once and kept for the page's life.
+// Both buttons read it, and building the row starts the fetch, so a click never waits.
+const metaCache = new Map();
+function clipMeta(id) {
+  if (!metaCache.has(id)) {
+    metaCache.set(id, fetch(`${SITE}/oembed?url=${encodeURIComponent(`https://open.spotify.com/track/${id}`)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null));
+  }
+  return metaCache.get(id);
+}
+
+// The name a player shows: "Artist - Title", safe for a file name, else the track ID
+function clipName(meta, id) {
+  const raw = meta && meta.title
+    ? `${meta.author_name ? meta.author_name.slice(0, 40) + " - " : ""}${meta.title}`
+    : "";
+  return raw.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 70) || id;
+}
+
+// The clip's audio address, times and name included
+async function clipUrl(id, suffix) {
+  const [a, b] = (suffix || "").split("-");
+  const q = new URLSearchParams();
+  if (a) q.set("s", a);
+  if (b) q.set("e", b);
+  q.set("n", clipName(await clipMeta(id), id));
+  return `${SITE}/audio/${id}.mp3?${q}`;
+}
+
+const clipWords = (s, e) => (e > s ? `Clip ${formatTime(s)}–${formatTime(e)}` : s ? `From ${formatTime(s)}` : "Whole song");
+
 function discordRow() {
   const row = document.createElement("div");
   row.className = "discord-row";
+  if (share && share.target && share.target.type === "track") clipMeta(share.target.id);   // warm it
+
+  const copy = document.createElement("button");
+  copy.className = "secondary";
+  copy.type = "button";
+  copy.textContent = "🔗 Copy clip link";
+  copy.title = "A link anyone can paste. Discord makes the player itself.";
+  copy.addEventListener("click", copyClipLink);
+
   const post = document.createElement("button");
   post.className = "secondary";
   post.type = "button";
   post.textContent = "🔊 Send to Discord";
   post.addEventListener("click", () => sendToDiscord());
+
   const set = document.createElement("button");
   set.className = "copy-discord";
   set.type = "button";
   set.textContent = webhookGet() ? "Change webhook" : "Add a webhook";
   set.addEventListener("click", () => askWebhook());
-  row.append(post, set);
+
+  row.append(copy, post, set);
   return row;
 }
 
@@ -35,7 +81,16 @@ function askWebhook(then) {
   if (then) then();
 }
 
-const clipWords = (s, e) => (e > s ? `Clip ${formatTime(s)}–${formatTime(e)}` : s ? `From ${formatTime(s)}` : "Whole song");
+// The bare link. It copies inside the tap, with the address filled in once the name arrives,
+// so Safari still allows the write; if the write is refused, the link goes in a prompt.
+function copyClipLink() {
+  if (!share || !share.target || share.target.type !== "track") return setStatus("Copy a clip for a single song only");
+  const url = clipUrl(share.target.id, share.suffix);
+  writeLink(url).then(ok => {
+    if (ok) return setStatus("Clip link copied. Paste it in a message and Discord makes the player.");
+    url.then(u => prompt("Copy this link:", u));
+  });
+}
 
 async function sendToDiscord() {
   if (!webhookGet()) return askWebhook(sendToDiscord);
@@ -53,12 +108,8 @@ async function sendToDiscord() {
   share.busy = true;
   setStatus("Cutting the clip…");
 
-  const meta = await fetch(`${SITE}/oembed?url=${encodeURIComponent(`https://open.spotify.com/track/${id}`)}`)
-    .then(r => (r.ok ? r.json() : null)).catch(() => null);
-  const label = clipWords(start, end);
-  const name = ((meta && meta.title) || "Spotiky")
-    .replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 70) || "Spotiky";
-  const file = `${meta && meta.author_name ? meta.author_name.slice(0, 40) + " - " : ""}${name}`;
+  const meta = await clipMeta(id);
+  const file = clipName(meta, id);
 
   const grab = async (from, to) => {
     const q = new URLSearchParams();
@@ -75,7 +126,6 @@ async function sendToDiscord() {
     res = await grab(start, end);
     blob = res.ok ? await res.blob() : null;
   }
-  const source = res.headers.get("X-Spotiky-Source") || "";
 
   const embed = {
     author: meta && meta.author_name ? { name: meta.author_name, url: meta.author_url } : undefined,
