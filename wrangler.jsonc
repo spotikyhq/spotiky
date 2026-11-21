@@ -19,5 +19,8 @@
   // Codes, playlists and sign-ins. The Worker makes its own tables the first time it's used.
   "d1_databases": [
     { "binding": "DB", "database_name": "spotiky", "database_id": "a2457e37-83d4-4efd-bef9-19f894c26404" }
+  ],
+  "kv_namespaces": [
+    { "binding": "KV", "id": "09e2b53daca14c9c983b953a3000946f" }
   ]
 }
