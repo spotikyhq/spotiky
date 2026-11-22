@@ -16,8 +16,8 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
     `emoji code ${b.em.code} with names (${b.em.chars.map(c => c.name).join(', ')})`);
   check(b.em.options[0].map(o => o.char).join('') === '🌃🌙' && b.em.options[1].map(o => o.char).join('') === '💡🔦🚗', `emoji choices skip newer and left-out emoji: ${b.em.options.map(p => p.map(o => o.char).join('')).join(' | ')}`);
   const prompt = env.AI.calls[0].input.messages[1].content;
-  check(/never quote lyrics/.test(prompt) && prompt.includes('𓇰 night: night, darkness') && prompt.includes('😁😂🙃') && !prompt.includes('🍆') && !prompt.includes('English:') && prompt.endsWith('/no_think') && env.AI.calls[0].model === '@cf/qwen/qwen3-30b-a3b-fp8',
-    'prompt names the song, lists the 98 signs and the emoji set, forbids quoting lyrics, turns thinking off (no English codes for songs)');
+  check(/never quote lyrics/.test(prompt) && prompt.includes('𓇰 night: night, darkness') && prompt.includes('😁😂🙃') && !prompt.includes('🍆') && !prompt.includes('English:') && !prompt.includes('/no_think') && env.AI.calls[0].model === '@cf/google/gemma-4-26b-a4b-it',
+    'prompt names the song, lists the 98 signs and the emoji set, forbids quoting lyrics, asks Gemma 4 (no English codes for songs)');
   check(one(env, 'SELECT COUNT(*) AS n FROM song_codes').n === 0, 'suggesting saves nothing');
 }
 // 2. Taken codes and look-alikes are skipped; real words get their dictionary meaning
@@ -59,7 +59,7 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
   const [st, b, h] = await post('/suggest', { type: 'track', id: ID1 }, env);
   const wait = Number(h.get('Retry-After')), songCalls = calls;
   const [stp, bp] = await post('/playlist/suggest', { items: `${ID1},${ID2}` }, env);
-  const broken = { async run() { throw new Error('5007: No such model @cf/qwen/qwen3-30b-a3b-fp8'); } };
+  const broken = { async run() { throw new Error('3040: Capacity temporarily exceeded, please try again.'); } };
   const [st2, b2] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: broken }));
   const cut = { async run() { return { response: '{"zh":[{"code":"夜光","chars":[{"char":"夜","meaning":"ni' }; } };
   await post('/playlist/suggest', { items: `${ID1},${ID2}` }, await newEnv({ AI: cut }));
@@ -68,7 +68,7 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
     `the daily limit -> ${st} "${b.error}", Retry-After ${wait}s, asked once`);
   check(stp === 503 && /used up today's code suggestions/.test(bp.error), `same for a playlist -> ${stp} "${bp.error}"`);
   check(st2 === 502 && /Try again/.test(b2.error), `another AI error still gives the usual message -> ${st2}`);
-  check(logs.some(l => l.startsWith('Workers AI failed: 5007: No such model')) && logs.some(l => l.startsWith('Workers AI failed: 3036')),
+  check(logs.some(l => /^Workers AI failed \(@cf\/google\/gemma-4-26b-a4b-it\): 3040: Capacity/.test(l)) && logs.some(l => /^Workers AI failed \(.+\): 3036/.test(l)),
     'AI errors are logged, so `wrangler tail` shows them');
   check(logs.some(l => /^Workers AI reply wasn't JSON \(\d+ chars\), ending: .*"meaning":"ni$/.test(l)), 'a cut-off reply is logged with how it ends');
 }
@@ -193,5 +193,26 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
   const pv = await worker.fetch(new Request('https://w.dev/?id=' + ID1), {});
   const pj = await pv.json();
   check(pv.status === 200 && pj.name === 'Blinding Lights' && pj.preview_url === 'https://p.scdn.co/mp3-preview/abc', `the preview route names the song: ${JSON.stringify(pj)}`);
+}
+// Last, because it marks the first model as retired for the rest of this file:
+// a retired model hands over to the next one by itself
+{
+  const logs = [];
+  const log = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  const seen = [], inputs = [];
+  const ai = { async run(model, input) {
+    seen.push(model); inputs.push(input);
+    if (model.includes('gemma')) throw new Error('5028: @cf/google/gemma-4-26b-a4b-it was deprecated on 2027-01-01. See the model catalog for alternatives.');
+    return { response: goodAnswer };
+  } };
+  const [st, b] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: ai }));
+  const first = seen.splice(0);
+  const [st2] = await post('/suggest', { type: 'track', id: ID3 }, await newEnv({ AI: ai }));
+  console.log = log;
+  check(st === 200 && b.zh.code === '夜光' && first.join(' -> ') === '@cf/google/gemma-4-26b-a4b-it -> @cf/qwen/qwen3.8-27b', `a retired model hands over to the next: ${first.join(' -> ')}`);
+  check(st2 === 200 && seen.join() === '@cf/qwen/qwen3.8-27b', `after that the retired one isn't asked again: ${seen.join(', ')}`);
+  check(inputs.at(-1).messages[1].content.endsWith('\n/no_think') && !inputs[0].messages[1].content.includes('/no_think'), 'only the Qwen model is told not to think out loud');
+  check(logs.some(l => /^Workers AI failed \(@cf\/google\/gemma-4-26b-a4b-it\): 5028/.test(l)), 'the retirement shows in `wrangler tail`');
 }
 T.done();

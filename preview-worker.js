@@ -46,7 +46,10 @@
 
 import { audio } from "./audio.js";
 
-const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+// Workers AI models, in order. Cloudflare retires models now and then (the Qwen3 30B this used
+// went on 2026-11-20), so when one is gone the next takes over by itself. These are the smaller
+// models Cloudflare suggested as replacements. Gemma 4 runs on the free plan.
+const MODELS = ["@cf/google/gemma-4-26b-a4b-it", "@cf/qwen/qwen3.8-27b"];
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
 const FROM = "Spotiky <code@spotiky.com>";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
@@ -987,8 +990,7 @@ Reply with JSON only, in exactly this shape:
 "em":[{"code":"..","why":".."}],
 "em_alts":[["..",".."],["..",".."]]${isPlaylist ? `,
 "en":[{"code":"..","why":".."}],
-"en_alts":[["..",".."],["..",".."]]` : ""}}
-/no_think`;
+"en_alts":[["..",".."],["..",".."]]` : ""}}`;
 }
 
 // Workers AI's free plan allows 10,000 neurons a day, reset at 00:00 UTC. Past that, every call
@@ -996,20 +998,31 @@ Reply with JSON only, in exactly this shape:
 class OutOfAI extends Error {}
 const AI_LIMIT_RE = /\b3036\b|daily free allocation/i;
 
+// Errors that mean a model can't be used at all: retired (5028), unknown (5007) or paid plan only (5035)
+const MODEL_GONE_RE = /\b(5028|5007|5035)\b|deprecated|no such model/i;
+const goneModels = new Set();   // per Worker instance, so a retired model isn't asked every time
+
 async function askAI(env, prompt, maxTokens) {
   let res;
-  try {
-    res = await env.AI.run(MODEL, {
-      messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
-      max_tokens: maxTokens,
-      temperature: 0.7,
-    });
-  } catch (err) {
-    const why = String((err && err.message) || err);
-    console.log("Workers AI failed: " + why.slice(0, 300));   // shows in `wrangler tail`
-    if (AI_LIMIT_RE.test(why)) throw new OutOfAI(why);
-    return null;
+  for (const model of MODELS) {
+    if (goneModels.has(model) && model !== MODELS[MODELS.length - 1]) continue;
+    try {
+      res = await env.AI.run(model, {
+        // Qwen models think out loud unless told not to
+        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: model.includes("/qwen/") ? prompt + "\n/no_think" : prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.7,
+      });
+      break;
+    } catch (err) {
+      const why = String((err && err.message) || err);
+      console.log(`Workers AI failed (${model}): ` + why.slice(0, 300));   // shows in `wrangler tail`
+      if (AI_LIMIT_RE.test(why)) throw new OutOfAI(why);
+      if (!MODEL_GONE_RE.test(why)) return null;
+      goneModels.add(model);
+    }
   }
+  if (!res) return null;
   const out = res && (res.response ?? res.choices?.[0]?.message?.content ?? res.choices?.[0]?.text);
   if (out && typeof out === "object") return out;
   const parsed = parseJsonLoose(String(out || ""));
@@ -1545,8 +1558,7 @@ For every kind, also give 4 alternatives for each position of your first code: c
 Write each "why" as one short English line, under 12 words, linking their label to the ${what}.${fixed.zh ? `\nAlso give a short English meaning for each character of their Chinese label ${fixed.zh}, as "fixed_chars".` : ""}
 
 Reply with JSON only, in exactly this shape:
-{${shapes.join(",\n")}}
-/no_think`;
+{${shapes.join(",\n")}}`;
 }
 
 // ---- Your collection: renaming, the shelf, deleting ------------------------------------------
