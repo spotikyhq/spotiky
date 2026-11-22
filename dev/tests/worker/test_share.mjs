@@ -48,6 +48,30 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
   const [st3, b3] = await post('/suggest', { type: 'track', id: ID1 }, env3);
   check(st3 === 200 && b3.zh.code === '夜光', 'an answer that is already an object works too');
 }
+// 3b. Workers AI failing outright
+{
+  const logs = [];
+  const log = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  let calls = 0;
+  const outOfNeurons = { async run() { calls++; throw new Error('3036: You have used up your daily free allocation of 10,000 neurons. Please upgrade to Cloudflare\'s Workers Paid plan if you would like to continue usage.'); } };
+  const env = await newEnv({ AI: outOfNeurons });
+  const [st, b, h] = await post('/suggest', { type: 'track', id: ID1 }, env);
+  const wait = Number(h.get('Retry-After')), songCalls = calls;
+  const [stp, bp] = await post('/playlist/suggest', { items: `${ID1},${ID2}` }, env);
+  const broken = { async run() { throw new Error('5007: No such model @cf/qwen/qwen3-30b-a3b-fp8'); } };
+  const [st2, b2] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: broken }));
+  const cut = { async run() { return { response: '{"zh":[{"code":"夜光","chars":[{"char":"夜","meaning":"ni' }; } };
+  await post('/playlist/suggest', { items: `${ID1},${ID2}` }, await newEnv({ AI: cut }));
+  console.log = log;
+  check(st === 503 && /used up today's code suggestions/.test(b.error) && /come back in (about \d+ hours|under an hour)/.test(b.error) && wait > 0 && wait <= 86400 && songCalls === 1,
+    `the daily limit -> ${st} "${b.error}", Retry-After ${wait}s, asked once`);
+  check(stp === 503 && /used up today's code suggestions/.test(bp.error), `same for a playlist -> ${stp} "${bp.error}"`);
+  check(st2 === 502 && /Try again/.test(b2.error), `another AI error still gives the usual message -> ${st2}`);
+  check(logs.some(l => l.startsWith('Workers AI failed: 5007: No such model')) && logs.some(l => l.startsWith('Workers AI failed: 3036')),
+    'AI errors are logged, so `wrangler tail` shows them');
+  check(logs.some(l => /^Workers AI reply wasn't JSON \(\d+ chars\), ending: .*"meaning":"ni$/.test(l)), 'a cut-off reply is logged with how it ends');
+}
 // 4. Claiming, then the same song gets the same codes
 {
   const env = await newEnv({ AI: fakeAI([goodAnswer]) });

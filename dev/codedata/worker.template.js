@@ -127,13 +127,14 @@ export default {
     try {
       return await handler(req);
     } catch (err) {
+      if (err instanceof OutOfAI) return outOfAI();
       // A new database has no tables yet: make them, then try once more
       if (env.DB && /no such table/i.test(String(err && err.message))) {
         try {
           await env.DB.batch(SCHEMA.map(s => env.DB.prepare(s)));
           return await handler(req);
         } catch (err2) {
-          return serverError(err2);
+          return err2 instanceof OutOfAI ? outOfAI() : serverError(err2);
         }
       }
       return serverError(err);
@@ -418,19 +419,39 @@ Reply with JSON only, in exactly this shape:
 /no_think`;
 }
 
+// Workers AI's free plan allows 10,000 neurons a day, reset at 00:00 UTC. Past that, every call
+// fails with error 3036 until the reset, so trying again doesn't help.
+class OutOfAI extends Error {}
+const AI_LIMIT_RE = /\b3036\b|daily free allocation/i;
+
 async function askAI(env, prompt, maxTokens) {
+  let res;
   try {
-    const res = await env.AI.run(MODEL, {
+    res = await env.AI.run(MODEL, {
       messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
       max_tokens: maxTokens,
       temperature: 0.7,
     });
-    const out = res && (res.response ?? res.choices?.[0]?.message?.content ?? res.choices?.[0]?.text);
-    if (out && typeof out === "object") return out;
-    return parseJsonLoose(String(out || ""));
   } catch (err) {
+    const why = String((err && err.message) || err);
+    console.log("Workers AI failed: " + why.slice(0, 300));   // shows in `wrangler tail`
+    if (AI_LIMIT_RE.test(why)) throw new OutOfAI(why);
     return null;
   }
+  const out = res && (res.response ?? res.choices?.[0]?.message?.content ?? res.choices?.[0]?.text);
+  if (out && typeof out === "object") return out;
+  const parsed = parseJsonLoose(String(out || ""));
+  // The end of the reply shows whether it was cut off by max_tokens or just wasn't JSON
+  if (!parsed) console.log(`Workers AI reply wasn't JSON (${String(out || "").length} chars), ending: ` + String(out || "").slice(-200));
+  return parsed;
+}
+
+function outOfAI() {
+  const now = new Date();
+  const secs = Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now) / 1000);
+  const hours = Math.ceil(secs / 3600);
+  const when = hours <= 1 ? "in under an hour" : `in about ${hours} hours`;
+  return json({ error: `Spotiky has used up today's code suggestions. They come back ${when}.` }, 503, { "Retry-After": String(secs) });
 }
 
 function parseJsonLoose(text) {
