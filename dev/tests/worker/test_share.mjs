@@ -16,8 +16,8 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
     `emoji code ${b.em.code} with names (${b.em.chars.map(c => c.name).join(', ')})`);
   check(b.em.options[0].map(o => o.char).join('') === '🌃🌙' && b.em.options[1].map(o => o.char).join('') === '💡🔦🚗', `emoji choices skip newer and left-out emoji: ${b.em.options.map(p => p.map(o => o.char).join('')).join(' | ')}`);
   const prompt = env.AI.calls[0].input.messages[1].content;
-  check(/never quote lyrics/.test(prompt) && prompt.includes('𓇰 night: night, darkness') && prompt.includes('😁😂🙃') && !prompt.includes('🍆') && !prompt.includes('English:') && !prompt.includes('/no_think') && env.AI.calls[0].model === '@cf/google/gemma-4-26b-a4b-it',
-    'prompt names the song, lists the 98 signs and the emoji set, forbids quoting lyrics, asks Gemma 4 (no English codes for songs)');
+  check(/never quote lyrics/.test(prompt) && prompt.includes('𓇰 night: night, darkness') && prompt.includes('😁😂🙃') && !prompt.includes('🍆') && !prompt.includes('English:') && !prompt.includes('/no_think') && env.AI.calls[0].model === '@cf/google/gemma-4-26b-a4b-it' && env.AI.calls[0].input.chat_template_kwargs.enable_thinking === false,
+    'prompt names the song, lists the 98 signs and the emoji set, forbids quoting lyrics, asks Gemma 4 with thinking off (no English codes for songs)');
   check(one(env, 'SELECT COUNT(*) AS n FROM song_codes').n === 0, 'suggesting saves nothing');
 }
 // 2. Taken codes and look-alikes are skipped; real words get their dictionary meaning
@@ -40,7 +40,7 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
 {
   const env = await newEnv({ AI: fakeAI(['Sorry, I cannot help with that.', goodAnswer]) });
   const [st, b] = await post('/suggest', { type: 'track', id: ID1 }, env);
-  check(st === 200 && b.zh.code === '夜光' && env.AI.calls.length === 2, 'an answer that isn\'t JSON is retried once');
+  check(st === 200 && b.zh.code === '夜光' && env.AI.calls.length === 2 && env.AI.calls[1].model === '@cf/qwen/qwen3.8-27b', 'an answer that isn\'t JSON goes to the other model');
   const env2 = await newEnv({ AI: fakeAI(['nope', 'still nope']) });
   const [st2, b2] = await post('/suggest', { type: 'track', id: ID1 }, env2);
   check(st2 === 502 && /Try again/.test(b2.error), `two bad answers -> ${st2} "${b2.error}"`);
@@ -64,13 +64,42 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
   const cut = { async run() { return { response: '{"zh":[{"code":"夜光","chars":[{"char":"夜","meaning":"ni' }; } };
   await post('/playlist/suggest', { items: `${ID1},${ID2}` }, await newEnv({ AI: cut }));
   console.log = log;
-  check(st === 503 && /used up today's code suggestions/.test(b.error) && /come back in (about \d+ hours|under an hour)/.test(b.error) && wait > 0 && wait <= 86400 && songCalls === 1,
+  check(st === 429 && /used up today's code suggestions/.test(b.error) && /come back in (about \d+ hours|under an hour)/.test(b.error) && wait > 0 && wait <= 86400 && songCalls === 1,
     `the daily limit -> ${st} "${b.error}", Retry-After ${wait}s, asked once`);
-  check(stp === 503 && /used up today's code suggestions/.test(bp.error), `same for a playlist -> ${stp} "${bp.error}"`);
+  check(stp === 429 && /used up today's code suggestions/.test(bp.error), `same for a playlist -> ${stp} "${bp.error}"`);
   check(st2 === 502 && /Try again/.test(b2.error), `another AI error still gives the usual message -> ${st2}`);
   check(logs.some(l => /^Workers AI failed \(@cf\/google\/gemma-4-26b-a4b-it\): 3040: Capacity/.test(l)) && logs.some(l => /^Workers AI failed \(.+\): 3036/.test(l)),
     'AI errors are logged, so `wrangler tail` shows them');
-  check(logs.some(l => /^Workers AI reply wasn't JSON \(\d+ chars\), ending: .*"meaning":"ni$/.test(l)), 'a cut-off reply is logged with how it ends');
+  check(logs.some(l => /^Workers AI reply wasn't JSON \(@cf\/google\/gemma-4-26b-a4b-it, \d+ chars\), ending: .*"meaning":"ni$/.test(l)), 'a cut-off reply is logged with how it ends');
+}
+// 3c. A model that is busy, silent or out of room hands over to the next
+{
+  const logs = [];
+  const log = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  const reply = model => ({ choices: [{ message: { content: JSON.stringify(goodAnswer) }, finish_reason: 'stop' }] });
+  const busy = { calls: [], async run(model) { this.calls.push(model); if (model.includes('gemma')) throw new Error('3040: Capacity temporarily exceeded, please try again.'); return reply(model); } };
+  const [st1, b1] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: busy }));
+  const silent = { calls: [], async run(model) { this.calls.push(model); if (model.includes('gemma')) return new Promise(() => {}); return reply(model); } };
+  const t0 = Date.now();
+  const [st2, b2] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: silent, AI_TIMEOUT_MS: '50' }));
+  const waited = Date.now() - t0;
+  const thinking = { calls: [], async run(model) { this.calls.push(model);
+    if (model.includes('gemma')) return { choices: [{ message: { content: null, reasoning_content: 'Let me think about this song...' }, finish_reason: 'length' }], usage: { prompt_tokens: 1500, completion_tokens: 1400 } };
+    return reply(model); } };
+  const [st3, b3] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: thinking }));
+  const halves = { calls: [], async run(model) { this.calls.push(model);
+    return { response: model.includes('gemma') ? { zh: goodAnswer.zh, zh_alts: goodAnswer.zh_alts } : goodAnswer }; } };
+  const [st4, b4] = await post('/playlist/suggest', { items: `${ID1},${ID2}` }, await newEnv({ AI: halves }));
+  console.log = log;
+  check(st1 === 200 && b1.zh.code === '夜光' && busy.calls.join() === '@cf/google/gemma-4-26b-a4b-it,@cf/qwen/qwen3.8-27b', `a busy model (3040) hands over -> ${st1} via ${busy.calls.join(' -> ')}`);
+  check(st2 === 200 && b2.zh.code === '夜光' && silent.calls.length === 2 && waited < 2000, `a model that never answers is given up on (${waited} ms with a 50 ms limit)`);
+  check(logs.some(l => /^Workers AI failed \(@cf\/google\/gemma-4-26b-a4b-it\): no answer within/.test(l)), 'the wait shows in `wrangler tail`');
+  check(st3 === 200 && b3.zh.code === '夜光' && thinking.calls.length === 2, 'an empty reply (thinking used every token) hands over');
+  check(logs.some(l => /^Workers AI reply wasn't JSON \(@cf\/google\/gemma-4-26b-a4b-it, 0 chars, finish length, tokens \{"prompt_tokens":1500,"completion_tokens":1400\}\)/.test(l)), 'an empty reply is logged with why it ended and the token counts');
+  const en = b4.labels && b4.labels.en;
+  check(st4 === 200 && halves.calls.length === 2 && b4.labels.zh && en && en.code === 'night-drive', `an answer missing some kinds gets the rest from the next model (en ${en && en.code})`);
+  check(logs.some(l => /^Workers AI answered \(@cf\/google\/gemma-4-26b-a4b-it\) in \d+ ms$/.test(l)), 'answers log how long they took');
 }
 // 4. Claiming, then the same song gets the same codes
 {
@@ -212,7 +241,27 @@ const TONE = /[\u{1F3FB}-\u{1F3FF}]/u;
   console.log = log;
   check(st === 200 && b.zh.code === '夜光' && first.join(' -> ') === '@cf/google/gemma-4-26b-a4b-it -> @cf/qwen/qwen3.8-27b', `a retired model hands over to the next: ${first.join(' -> ')}`);
   check(st2 === 200 && seen.join() === '@cf/qwen/qwen3.8-27b', `after that the retired one isn't asked again: ${seen.join(', ')}`);
-  check(inputs.at(-1).messages[1].content.endsWith('\n/no_think') && !inputs[0].messages[1].content.includes('/no_think'), 'only the Qwen model is told not to think out loud');
+  check(inputs.every(i => i.chat_template_kwargs && i.chat_template_kwargs.enable_thinking === false && !i.messages[1].content.includes('/no_think')), 'both models are asked with thinking off');
   check(logs.some(l => /^Workers AI failed \(@cf\/google\/gemma-4-26b-a4b-it\): 5028/.test(l)), 'the retirement shows in `wrangler tail`');
+}
+
+// After that: a model that won't take the thinking switch is asked without it from then on
+// (Gemma is marked retired by the test above, so only Qwen is asked here)
+{
+  const logs = [];
+  const log = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  const inputs = [];
+  const picky = { async run(model, input) {
+    inputs.push(input);
+    if (input.chat_template_kwargs) throw new Error('5006: Input validation error: additional properties not allowed: chat_template_kwargs');
+    return { response: goodAnswer };
+  } };
+  const [st, b] = await post('/suggest', { type: 'track', id: ID1 }, await newEnv({ AI: picky }));
+  const [st2] = await post('/suggest', { type: 'track', id: ID2 }, await newEnv({ AI: picky }));
+  console.log = log;
+  check(st === 200 && b.zh.code === '夜光' && inputs.length === 3 && inputs[0].chat_template_kwargs && !inputs[1].chat_template_kwargs, `a refused switch is retried without it -> ${st}`);
+  check(st2 === 200 && !inputs[2].chat_template_kwargs, 'and left off after that');
+  check(logs.some(l => /^Workers AI refused the thinking switch \(@cf\/qwen\/qwen3\.8-27b\)/.test(l)), 'the refusal shows in `wrangler tail`');
 }
 T.done();

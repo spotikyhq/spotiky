@@ -47,9 +47,14 @@
 import { audio } from "./audio.js";
 
 // Workers AI models, in order. Cloudflare retires models now and then (the Qwen3 30B this used
-// went on 2026-11-20), so when one is gone the next takes over by itself. These are the smaller
-// models Cloudflare suggested as replacements. Gemma 4 runs on the free plan.
+// went on 2026-11-20), so when one fails the next is asked. These are the smaller models
+// Cloudflare suggested as replacements. Gemma 4 runs on the free plan.
 const MODELS = ["@cf/google/gemma-4-26b-a4b-it", "@cf/qwen/qwen3.8-27b"];
+// Both can think before answering. Here that only costs time: with thinking on, a playlist took
+// over 20 seconds and the thinking used up every token, leaving an empty reply.
+const NO_THINKING = { enable_thinking: false };
+// How long one model gets before the next is asked, so a model that's queued doesn't hang the page
+const AI_TIMEOUT_MS = 30000;
 const WORDS_URL = "https://raw.githubusercontent.com/spotikyhq/spotiky/main/zh-words.json";
 const FROM = "Spotiky <code@spotiky.com>";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
@@ -946,16 +951,23 @@ function takenReply(script, code, justNow) {
 
 const SYSTEM = "You name songs with short, poetic codes for Spotiky, a music link app. You write in your own words, never quote song lyrics, and reply with JSON only.";
 
-// Suggestions for the given kinds: { zh: {cands, alts}, ... }. Asks a second time if the first answer is unusable.
+// Suggestions for the given kinds: { zh: {cands, alts}, ... }. If an answer leaves a kind with
+// nothing usable, the next model is asked for it.
 async function askForCodes(env, songs, isPlaylist, kinds, words) {
   const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji, en: readEnglish };
-  const prompt = buildPrompt(songs, isPlaylist);
   const built = Object.fromEntries(kinds.map(s => [s, { cands: [], alts: [] }]));
-  for (let attempt = 0; attempt < 2 && kinds.some(s => !built[s].cands.length); attempt++) {
-    const ai = await askAI(env, prompt, isPlaylist ? 1700 : 1400);
-    for (const s of kinds) if (!built[s].cands.length) built[s] = readers[s](ai);
-  }
+  await askAI(env, buildPrompt(songs, isPlaylist), isPlaylist ? 1700 : 1400,
+    ai => fillFrom(built, kinds, readers, ai), () => kinds.some(s => !built[s].cands.length));
   return built;
+}
+
+// Keeps the first usable suggestions for each kind; alternatives alone count until then
+function fillFrom(built, kinds, readers, ai) {
+  for (const s of kinds) {
+    if (built[s].cands.length) continue;
+    const r = readers[s](ai);
+    if (r.cands.length || !built[s].alts.length) built[s] = r;
+  }
 }
 
 function buildPrompt(songs, isPlaylist) {
@@ -1000,35 +1012,84 @@ const AI_LIMIT_RE = /\b3036\b|daily free allocation/i;
 
 // Errors that mean a model can't be used at all: retired (5028), unknown (5007) or paid plan only (5035)
 const MODEL_GONE_RE = /\b(5028|5007|5035)\b|deprecated|no such model/i;
-const goneModels = new Set();   // per Worker instance, so a retired model isn't asked every time
+// Errors that mean the request itself was refused, as when a model doesn't take the thinking switch
+const BAD_INPUT_RE = /\b5006\b|chat_template_kwargs|validation|oneOf|additional propert/i;
+// Per Worker instance, so a model that's gone or won't take the switch isn't asked that way every time
+const goneModels = new Set(), noSwitch = new Set();
 
-async function askAI(env, prompt, maxTokens) {
-  let res;
+// Asks each model in turn. With `take`, every usable answer goes to it, and the next model is
+// asked only while `wanted()` says something is still missing; without, the first usable answer
+// is returned. Any failure moves on to the next model. Only running out of the daily
+// allowance stops it, since every model shares that.
+async function askAI(env, prompt, maxTokens, take, wanted) {
+  const limit = Number(env.AI_TIMEOUT_MS) || AI_TIMEOUT_MS;
   for (const model of MODELS) {
     if (goneModels.has(model) && model !== MODELS[MODELS.length - 1]) continue;
+    const started = Date.now();
+    let res;
     try {
-      res = await env.AI.run(model, {
-        // Qwen models think out loud unless told not to
-        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: model.includes("/qwen/") ? prompt + "\n/no_think" : prompt }],
-        max_tokens: maxTokens,
-        temperature: 0.7,
-      });
-      break;
+      res = await runModel(env, model, prompt, maxTokens, limit);
     } catch (err) {
       const why = String((err && err.message) || err);
       console.log(`Workers AI failed (${model}): ` + why.slice(0, 300));   // shows in `wrangler tail`
       if (AI_LIMIT_RE.test(why)) throw new OutOfAI(why);
-      if (!MODEL_GONE_RE.test(why)) return null;
-      goneModels.add(model);
+      if (MODEL_GONE_RE.test(why)) goneModels.add(model);
+      continue;
     }
+    const out = replyOf(res);
+    const answer = typeof out === "object" ? out : parseJsonLoose(out);
+    if (!answer) {
+      // The end of the reply shows whether it was cut off or just wasn't JSON; the finish reason
+      // and token counts show whether thinking used up the budget
+      const c = res && res.choices && res.choices[0];
+      const why = [c && c.finish_reason && `finish ${c.finish_reason}`, res && res.usage && `tokens ${JSON.stringify(res.usage)}`].filter(Boolean).join(", ");
+      console.log(`Workers AI reply wasn't JSON (${model}, ${out.length} chars${why ? ", " + why : ""}), ending: ` + out.slice(-200));
+      continue;
+    }
+    console.log(`Workers AI answered (${model}) in ${Date.now() - started} ms`);
+    if (!take) return answer;
+    take(answer);
+    if (!wanted || !wanted()) return answer;
   }
-  if (!res) return null;
-  const out = res && (res.response ?? res.choices?.[0]?.message?.content ?? res.choices?.[0]?.text);
-  if (out && typeof out === "object") return out;
-  const parsed = parseJsonLoose(String(out || ""));
-  // The end of the reply shows whether it was cut off by max_tokens or just wasn't JSON
-  if (!parsed) console.log(`Workers AI reply wasn't JSON (${String(out || "").length} chars), ending: ` + String(out || "").slice(-200));
-  return parsed;
+  return null;
+}
+
+async function runModel(env, model, prompt, maxTokens, limit) {
+  const input = {
+    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
+    max_tokens: maxTokens,
+    temperature: 0.7,
+  };
+  if (!noSwitch.has(model)) input.chat_template_kwargs = NO_THINKING;
+  try {
+    return await withTimeout(env.AI.run(model, input), limit);
+  } catch (err) {
+    const why = String((err && err.message) || err);
+    if (!input.chat_template_kwargs || !BAD_INPUT_RE.test(why)) throw err;
+    console.log(`Workers AI refused the thinking switch (${model}), asking without it: ` + why.slice(0, 200));
+    noSwitch.add(model);
+    const { chat_template_kwargs, ...plain } = input;
+    return await withTimeout(env.AI.run(model, plain), limit);
+  }
+}
+
+// The reply's text, or its object when the model gave JSON directly. Newer models answer in the
+// chat completions shape, older ones in `response`.
+function replyOf(res) {
+  const c = res && res.choices && res.choices[0];
+  for (const v of [res && res.response, c && c.message && c.message.content, c && c.text]) {
+    if (v && typeof v === "object") return v;
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return "";
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${Math.round(ms / 1000)} s`)), ms); }),
+  ]);
 }
 
 function outOfAI() {
@@ -1036,7 +1097,8 @@ function outOfAI() {
   const secs = Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now) / 1000);
   const hours = Math.ceil(secs / 3600);
   const when = hours <= 1 ? "in under an hour" : `in about ${hours} hours`;
-  return json({ error: `Spotiky has used up today's code suggestions. They come back ${when}.` }, 503, { "Retry-After": String(secs) });
+  // 429, not 503: the page reads 503 as the Worker not being set up
+  return json({ error: `Spotiky has used up today's code suggestions. They come back ${when}.` }, 429, { "Retry-After": String(secs) });
 }
 
 function parseJsonLoose(text) {
@@ -1515,17 +1577,16 @@ async function askForMatches(env, songs, isPlaylist, fixed, described, kinds, wo
   const readers = { zh: ai => readChinese(ai, words), eg: readGlyphs, em: readEmoji, en: readEnglish };
   const prompt = buildMatchPrompt(songs, isPlaylist, fixed, kinds);
   const built = Object.fromEntries(kinds.map(s => [s, { cands: [], alts: [] }]));
-  for (let attempt = 0; attempt < 2 && kinds.some(s => !built[s].cands.length); attempt++) {
-    const ai = await askAI(env, prompt, 1500);
-    for (const s of kinds) if (!built[s].cands.length) built[s] = readers[s](ai);
+  await askAI(env, prompt, 1500, ai => {
+    fillFrom(built, kinds, readers, ai);
     // The person's own Chinese characters get their meanings from the same answer
-    if (ai && fixed.zh && described.zh && Array.isArray(ai.fixed_chars)) {
+    if (fixed.zh && described.zh && Array.isArray(ai.fixed_chars)) {
       for (const c of described.zh.chars) {
         const hit = ai.fixed_chars.find(f => f && f.char === c.char && typeof f.meaning === "string");
         if (hit && !c.meaning) c.meaning = text(hit.meaning, 30);
       }
     }
-  }
+  }, () => kinds.some(s => !built[s].cands.length));
   return built;
 }
 
