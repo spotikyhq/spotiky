@@ -1514,23 +1514,32 @@ const CODE_IN_PATH_RE = new RegExp(String.raw`^\/(?:track\/)?([${CODE_CHARS}]+)(
 const CODE_START_RE = new RegExp(String.raw`^([${CODE_CHARS}]+)`, "u");
 const PLAYLIST_LINK_RE = /^(?=[0-9a-hjkmnp-tv-z]{0,12}[0-9])([0-9a-hjkmnp-tv-z]{3,13})(?=$|-|[^\x00-\x7F])(.*)$/iu;
 
+// GitHub Pages tells caches to keep the page for ten minutes, so a push can hide behind that
+// cache for ten minutes. A throwaway query on the subrequest keeps it out of the cache; the
+// browser never sees it.
+const fresh = request => {
+  const u = new URL(request.url);
+  u.searchParams.set("_", Date.now().toString(36));
+  return fetch(new Request(u.toString(), request));
+};
+
 async function site(request, env, ctx, url) {
   if (ctx && ctx.passThroughOnException) ctx.passThroughOnException();   // an error here still shows the page
   if (url.hostname !== "spotiky.com") return Response.redirect(SITE + url.pathname + url.search, 301);
   if (url.pathname === "/oembed") return oembedFor(url, env);
   const route = (request.method === "GET" || request.method === "HEAD") && pageRoute(url);
-  if (!route) return fetch(request);
+  if (!route) return fresh(request);
   try {
     const bot = PREVIEW_BOTS.test(request.headers.get("User-Agent") || "");
     const card = previewFor(route, env).catch(() => undefined);
     if (ctx && ctx.waitUntil) ctx.waitUntil(card);   // it finishes, and fills the caches, after a timed-out page has gone out
     const [page, found] = await Promise.all([
-      fetch(request.method === "HEAD" ? new Request(request, { method: "GET" }) : request),
+      fresh(request.method === "HEAD" ? new Request(request, { method: "GET" }) : request),
       within(card, bot ? BOT_WAIT : PERSON_WAIT),
     ]);
     return await withCard(page, found === undefined ? fallbackCard(route) : found, request, url);
   } catch (err) {
-    return fetch(request);
+    return fresh(request);
   }
 }
 
@@ -1827,6 +1836,7 @@ async function withCard(page, card, request, url) {
   const headers = new Headers(page.headers);
   for (const h of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(h);
   headers.set("Content-Type", "text/html; charset=utf-8");
+  headers.set("Cache-Control", "no-cache");
   const body = withHead(html, previewHead(card, SITE + url.pathname + url.search));
   return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
 }
@@ -1877,10 +1887,16 @@ const escAttr = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&
 
 // GET spotiky.com/oembed?url=<a Spotiky page>: Discord reads the artist line and the linked
 // site name from here; Slack takes the cover from it too
+// A Spotify song link answers too: the page asks for a song's name this way
+function spotifyRoute(page) {
+  const m = page.hostname === "open.spotify.com" && page.pathname.match(/^\/track\/([a-zA-Z0-9]{22})\/?$/);
+  return m ? { kind: "track", id: m[1], start: null, end: null } : null;
+}
+
 async function oembedFor(url, env) {
   let page = null;
   try { page = new URL(url.searchParams.get("url") || ""); } catch (err) { /* not an address */ }
-  const route = page && SITE_HOSTS.has(page.hostname) && pageRoute(page);
+  const route = page && (SITE_HOSTS.has(page.hostname) ? pageRoute(page) : spotifyRoute(page));
   const found = route ? await within(previewFor(route, env), BOT_WAIT) : null;
   const card = found === undefined ? fallbackCard(route) : found;
   if (!card || card === GONE) return json({ error: "No preview for that address" }, 404);
