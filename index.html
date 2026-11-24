@@ -1763,7 +1763,7 @@
         const dc = h('button', 'copy-discord', 'Copy for Discord');
         dc.type = 'button';
         dc.disabled = !!c.taken;
-        dc.title = 'A Discord link that shows the code itself';
+        dc.title = share.playlist ? "A Discord link that shows the code itself" : "Copies the clip as an audio file, which Discord plays in the message";
         dc.setAttribute('aria-label', `Copy ${linkCode(script)} link for Discord`);
         dc.addEventListener('click', () => copyCode(script, true));
         card.append(dc);
@@ -1935,13 +1935,19 @@
       if (!share || share.busy) return;
       const linkPromise = isSaved(script) ? Promise.resolve(shareLink(script))
         : share.playlist ? savePlaylistShare(script) : claimShare(script);
-      writeLink(linkPromise, forDiscord).then(copied => linkPromise.then(link => {
+      // For Discord, a song copies as its audio file: Discord makes a player out of an mp3 link by
+      // itself, so no masked link is needed. A playlist has no single file, so it keeps the link.
+      const audio = forDiscord && typeof clipUrl === "function" && share.target && share.target.type === "track";
+      const target = audio ? linkPromise.then(() => clipUrl(share.target.id, share.suffix)).catch(() => linkPromise) : linkPromise;
+      writeLink(target, forDiscord && !audio).then(copied => target.then(link => {
         if (copied) {
-          const done = forDiscord ? 'Copied for Discord. Paste it in a message.' : 'Link copied!';
+          const done = forDiscord
+            ? (audio ? "Audio link copied. Paste it in a message and Discord plays it." : "Copied for Discord. Paste it in a message.")
+            : "Link copied!";
           setCardNote(script, done, true);
           setStatus(done);
         } else {   // copying was refused: show the link to copy by hand
-          setCardNote(script, forDiscord ? discordLink(link) : asciiLink(link), true);
+          setCardNote(script, forDiscord && !audio ? discordLink(link) : asciiLink(link), true);
         }
       }, () => {}));
     }
