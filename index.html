@@ -548,13 +548,13 @@
 
     // Puts a link on the clipboard; resolves to whether that worked. The link can be a promise,
     // so the copy starts inside the tap (Safari only allows it there) and fills in once ready.
-    function writeLink(link, forDiscord = false) {
+    function writeLink(link, forDiscord = false, plainText = false) {
       const ready = Promise.resolve(link);
       const text = ready.then(l => forDiscord ? discordLink(l) : asciiLink(l));
       const plainCopy = () => text.then(t => navigator.clipboard.writeText(t)).then(() => true, () => false);
       if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
         const parts = { 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) };
-        if (!forDiscord) {
+        if (!forDiscord && !plainText) {
           parts['text/html'] = ready.then(l => new Blob([`<a href="${escapeHtml(asciiLink(l))}">${escapeHtml(prettyLink(l))}</a>`], { type: 'text/html' }));
         }
         return navigator.clipboard.write([new ClipboardItem(parts)]).then(() => true, plainCopy);
@@ -1936,10 +1936,11 @@
       const linkPromise = isSaved(script) ? Promise.resolve(shareLink(script))
         : share.playlist ? savePlaylistShare(script) : claimShare(script);
       // For Discord, a song copies as its audio file: Discord makes a player out of an mp3 link by
-      // itself, so no masked link is needed. A playlist has no single file, so it keeps the link.
+      // itself, so it goes out as bare text with no masked link.
+      // A playlist has no single file, so it keeps the link.
       const audio = forDiscord && typeof clipUrl === "function" && share.target && share.target.type === "track";
       const target = audio ? linkPromise.then(() => clipUrl(share.target.id, share.suffix)).catch(() => linkPromise) : linkPromise;
-      writeLink(target, forDiscord && !audio).then(copied => target.then(link => {
+      writeLink(target, forDiscord && !audio, audio).then(copied => target.then(link => {
         if (copied) {
           const done = forDiscord
             ? (audio ? "Audio link copied. Paste it in a message and Discord plays it." : "Copied for Discord. Paste it in a message.")
